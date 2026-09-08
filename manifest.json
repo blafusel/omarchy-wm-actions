@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.blafusel.wm-actions",
+  "name": "WM Actions",
+  "version": "1.0.0",
+  "author": "blafusel",
+  "license": "MIT",
+  "description": "Mouse-only grid of common Hyprland actions plus a current-workspace window switcher",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "WM Actions",
+    "description": "Mouse-only grid of common Hyprland actions plus a current-workspace window switcher",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
