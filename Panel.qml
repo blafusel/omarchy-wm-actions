@@ -33,6 +33,7 @@ Panel {
   // ---- action grid catalog, grouped by function ----
   // type "exec"  -> cmd is argv passed straight to Quickshell.execDetached
   // type "key"   -> key is a keysym name injected via a down/up send_key_state pair
+  // type "text"  -> text is a literal string typed via wtype
   // id           -> stable key for the favorites list; never rename/reuse.
   readonly property var actionSections: [
     {
@@ -51,7 +52,11 @@ Panel {
       title: "KEYS",
       items: [
         { id: "keys.escape", icon: "⎋", label: "Escape", type: "key", key: "Escape" },
-        { id: "keys.return", icon: "⏎", label: "Return", type: "key", key: "Return" }
+        { id: "keys.return", icon: "⏎", label: "Return", type: "key", key: "Return" },
+        // Local-only: not published to GitHub, Gitea only. See
+        // contributing.md / this repo's remotes before ever syncing GitHub
+        // from Gitea, or drop this item first.
+        { id: "keys.remove_ai_marks", icon: "󰁨", label: "Clean AI", tooltip: "Types: /remove-ai-marks", type: "text", text: "/remove-ai-marks" }
       ]
     },
     {
@@ -208,6 +213,7 @@ Panel {
 
   function runAction(action) {
     if (action.type === "key") sendKey(action.key, action.mods || "")
+    else if (action.type === "text") typeText(action.text)
     else Quickshell.execDetached(action.cmd)
   }
 
@@ -261,6 +267,27 @@ Panel {
     property string pendingKey: ""
     property string pendingMods: ""
     onTriggered: Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.send_key_state({ mods = '" + pendingMods + "', key = '" + pendingKey + "', state = 'up'" + root.windowClause() + " })"])
+  }
+
+  // Types a literal string via wtype (no per-key Hyprland dispatcher for
+  // multi-character text). wtype has no explicit window-targeting option --
+  // it always types to whatever currently holds real ambient seat focus --
+  // so this leans on the same explicit refocus + settle delay as sendKey()
+  // above to make sure that's actually the captured target by the time it runs.
+  function typeText(text) {
+    if (root.lastFocusedAddress) {
+      Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.focus({ window = 'address:" + root.lastFocusedAddress + "' })"])
+    }
+    typeTextTimer.pendingText = text
+    typeTextTimer.restart()
+  }
+
+  Timer {
+    id: typeTextTimer
+    interval: 60
+    repeat: false
+    property string pendingText: ""
+    onTriggered: Quickshell.execDetached(["wtype", "--", pendingText])
   }
 
   function refreshWindows() {
@@ -564,6 +591,7 @@ Panel {
                   visible: !root.favoritesOnly || root.isFavorite(modelData.id)
                   iconText: modelData.icon
                   text: modelData.label
+                  tooltipText: modelData.tooltip || ""
                   foreground: root.bar.foreground
                   fontFamily: root.bar.fontFamily
                   isFavorite: root.isFavorite(modelData.id)
