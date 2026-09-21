@@ -32,6 +32,7 @@ Panel {
   // ---- action grid catalog, grouped by function ----
   // type "exec"  -> cmd is argv passed straight to Quickshell.execDetached
   // type "key"   -> key is a keysym name injected via a down/up send_key_state pair
+  // id           -> stable key for the favorites list; never rename/reuse.
   readonly property var actionSections: [
     {
       title: "CLIPBOARD",
@@ -40,34 +41,71 @@ Panel {
         // (default/hypr/bindings/clipboard.lua), which pick the right raw
         // key per-app (e.g. Ctrl+Insert in terminals) -- so these stay
         // correct instead of just blasting Ctrl+C into a shell.
-        { icon: "󰆏", label: "Copy",  type: "key", key: "C", mods: "SUPER" },
-        { icon: "󰆒", label: "Paste", type: "key", key: "V", mods: "SUPER" },
-        { icon: "󰆐", label: "Cut",   type: "key", key: "X", mods: "SUPER" }
+        { id: "clipboard.copy",  icon: "󰆏", label: "Copy",  type: "key", key: "C", mods: "SUPER" },
+        { id: "clipboard.paste", icon: "󰆒", label: "Paste", type: "key", key: "V", mods: "SUPER" },
+        { id: "clipboard.cut",   icon: "󰆐", label: "Cut",   type: "key", key: "X", mods: "SUPER" }
       ]
     },
     {
       title: "KEYS",
       items: [
-        { icon: "⎋", label: "Escape", type: "key", key: "Escape" },
-        { icon: "⏎", label: "Return", type: "key", key: "Return" }
+        { id: "keys.escape", icon: "⎋", label: "Escape", type: "key", key: "Escape" },
+        { id: "keys.return", icon: "⏎", label: "Return", type: "key", key: "Return" }
       ]
     },
     {
       title: "LAUNCH",
       items: [
-        { icon: "󱂬", label: "Launcher", type: "exec", cmd: ["omarchy-menu", "toggle"] },
-        { icon: "󰖟", label: "Browser",  type: "exec", cmd: ["omarchy-launch-browser"] },
-        { icon: "", label: "Terminal", type: "exec", cmd: ["omarchy-launch-terminal"] }
+        { id: "launch.launcher", icon: "󱂬", label: "Launcher", type: "exec", cmd: ["omarchy-menu", "toggle"] },
+        { id: "launch.browser",  icon: "󰖟", label: "Browser",  type: "exec", cmd: ["omarchy-launch-browser"] },
+        { id: "launch.terminal", icon: "", label: "Terminal", type: "exec", cmd: ["omarchy-launch-terminal"] }
       ]
     },
     {
       title: "SYSTEM",
       items: [
-        { icon: "󰄀", label: "Screenshot",  type: "exec", cmd: ["omarchy-capture-screenshot"] },
-        { icon: "󰥻", label: "Keybindings", type: "exec", cmd: ["omarchy-menu-keybindings"] }
+        { id: "system.screenshot",  icon: "󰄀", label: "Screenshot",  type: "exec", cmd: ["omarchy-capture-screenshot"] },
+        { id: "system.keybindings", icon: "󰥻", label: "Keybindings", type: "exec", cmd: ["omarchy-menu-keybindings"] }
       ]
     }
   ]
+
+  // ---- favorites ----
+  // Persisted into this widget's shell.json entry via bar.shell.updateEntryInline
+  // (same mechanism the tray uses for pinned items), so they survive shell
+  // restarts. `favorites` and `favoritesOnly` are derived straight from
+  // `settings` (reactive: re-reads whenever the entry changes), so no local
+  // copy to keep in sync -- toggling just writes through and the read-side
+  // updates itself.
+  readonly property var favorites: root.setting("favorites", [])
+  readonly property bool favoritesOnly: root.setting("favoritesOnly", false)
+
+  function isFavorite(favId) {
+    return root.favorites.indexOf(favId) !== -1
+  }
+
+  function persistSettings(patch) {
+    if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function") return
+    var merged = {}
+    for (var k in root.settings) merged[k] = root.settings[k]
+    for (var k2 in patch) merged[k2] = patch[k2]
+    root.bar.shell.updateEntryInline(root.moduleName, merged)
+  }
+
+  function toggleFavorite(favId) {
+    var next = root.favorites.slice()
+    var idx = next.indexOf(favId)
+    if (idx !== -1) next.splice(idx, 1)
+    else next.push(favId)
+    root.persistSettings({ favorites: next })
+  }
+
+  function toggleFavoritesOnly() {
+    root.persistSettings({ favoritesOnly: !root.favoritesOnly })
+  }
+
+  readonly property var windowSectionFavIds: ["window.scratchpad", "window.float", "window.fullscreen", "window.close", "window.stash"]
+  readonly property bool windowSectionHasVisibleItems: !root.favoritesOnly || root.windowSectionFavIds.some(function(favId) { return root.isFavorite(favId) })
 
   // Windows on the currently-visible workspace of the focused monitor, each
   // as { address, title, class }.
@@ -373,9 +411,24 @@ Panel {
         width: card.width - card.contentLeftInset - card.contentRightInset
         spacing: Style.space(14)
 
+        Toggle {
+          width: contentColumn.width
+          label: "Favorites only"
+          description: "Hide everything except starred buttons"
+          checked: root.favoritesOnly
+          foreground: root.bar.foreground
+          fontFamily: root.bar.fontFamily
+          onClicked: root.toggleFavoritesOnly()
+        }
+
+        PanelSeparator {
+          foreground: root.bar.foreground
+        }
+
         Column {
           width: contentColumn.width
           spacing: Style.space(8)
+          visible: root.windowSectionHasVisibleItems
 
           PanelSectionHeader {
             text: "WINDOW"
@@ -393,75 +446,65 @@ Panel {
             columnSpacing: Style.space(8)
             rowSpacing: Style.space(8)
 
-            Button {
+            FavButton {
               Layout.fillWidth: true
+              visible: !root.favoritesOnly || root.isFavorite("window.scratchpad")
               iconText: "󰘖"
               text: "Scratchpad"
-              fontSize: Style.font.bodySmall
-              iconSize: Style.font.title
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
-              bordered: true
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+              isFavorite: root.isFavorite("window.scratchpad")
+              onFavoriteToggled: root.toggleFavorite("window.scratchpad")
               onClicked: root.runAction({ type: "exec", cmd: ["hyprctl", "dispatch", "hl.dsp.workspace.toggle_special('scratchpad')"] })
             }
 
-            Button {
+            FavButton {
               Layout.fillWidth: true
+              visible: !root.favoritesOnly || root.isFavorite("window.float")
               iconText: "󰹗"
               text: "Float"
-              fontSize: Style.font.bodySmall
-              iconSize: Style.font.title
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
-              bordered: true
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+              isFavorite: root.isFavorite("window.float")
+              onFavoriteToggled: root.toggleFavorite("window.float")
               onClicked: root.runAction({ type: "exec", cmd: ["hyprctl", "dispatch", "hl.dsp.window.float({ action = 'toggle' })"] })
             }
 
-            Button {
+            FavButton {
               Layout.fillWidth: true
+              visible: !root.favoritesOnly || root.isFavorite("window.fullscreen")
               iconText: "󰊓"
               text: "Fullscreen"
-              fontSize: Style.font.bodySmall
-              iconSize: Style.font.title
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
-              bordered: true
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+              isFavorite: root.isFavorite("window.fullscreen")
+              onFavoriteToggled: root.toggleFavorite("window.fullscreen")
               onClicked: root.runAction({ type: "exec", cmd: ["hyprctl", "dispatch", "hl.dsp.window.fullscreen({ mode = 'fullscreen' })"] })
             }
 
-            Button {
+            FavButton {
               Layout.fillWidth: true
+              visible: !root.favoritesOnly || root.isFavorite("window.close")
               iconText: "󰖭"
               text: "Close"
               tooltipText: "Close window"
-              fontSize: Style.font.bodySmall
-              iconSize: Style.font.title
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
-              bordered: true
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+              isFavorite: root.isFavorite("window.close")
+              onFavoriteToggled: root.toggleFavorite("window.close")
               onClicked: root.closeActiveWindow()
             }
 
-            Button {
+            FavButton {
               Layout.fillWidth: true
+              visible: !root.favoritesOnly || root.isFavorite("window.stash")
               iconText: root.lastFocusedInScratchpad ? "󰄝" : "󰄠"
               text: root.lastFocusedInScratchpad ? "Restore" : "Stash"
               tooltipText: root.lastFocusedInScratchpad ? "Send back to its original workspace" : "Send to scratchpad"
-              fontSize: Style.font.bodySmall
-              iconSize: Style.font.title
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
-              bordered: true
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+              isFavorite: root.isFavorite("window.stash")
+              onFavoriteToggled: root.toggleFavorite("window.stash")
               onClicked: root.lastFocusedInScratchpad ? root.sendActiveToDesktop() : root.sendActiveToScratchpad()
             }
           }
@@ -474,6 +517,7 @@ Panel {
             required property var modelData
             width: contentColumn.width
             spacing: Style.space(8)
+            visible: !root.favoritesOnly || sectionColumn.modelData.items.some(function(it) { return root.isFavorite(it.id) })
 
             PanelSectionHeader {
               text: sectionColumn.modelData.title
@@ -489,18 +533,16 @@ Panel {
 
               Repeater {
                 model: sectionColumn.modelData.items
-                delegate: Button {
+                delegate: FavButton {
                   required property var modelData
                   Layout.fillWidth: true
+                  visible: !root.favoritesOnly || root.isFavorite(modelData.id)
                   iconText: modelData.icon
                   text: modelData.label
-                  fontSize: Style.font.bodySmall
-                  iconSize: Style.font.title
                   foreground: root.bar.foreground
                   fontFamily: root.bar.fontFamily
-                  bordered: true
-                  horizontalPadding: Style.spacing.controlPaddingX
-                  verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+                  isFavorite: root.isFavorite(modelData.id)
+                  onFavoriteToggled: root.toggleFavorite(modelData.id)
                   onClicked: root.runAction(modelData)
                 }
               }

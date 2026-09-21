@@ -27,6 +27,10 @@ WINDOW's last two buttons act on whatever window had focus right before the pane
 
 CLIPBOARD and KEYS target the window that had focus right before the panel opened explicitly (via `send_key_state`'s `window` field), rather than relying on ambient seat focus — clicking a button in the panel is itself a pointer event on the panel's own surface, which was enough to disrupt plain ambient-focus delivery for these two groups.
 
+## Favorites
+
+Every button in WINDOW/CLIPBOARD/KEYS/LAUNCH/SYSTEM has a small star in its corner — click it to favorite that button, independently of the button's own action. A "Favorites only" switch at the top of the panel hides everything except starred buttons (and hides a section entirely once nothing in it is starred). DICTATION and the window switcher below are always shown, filter or not. Favorites persist in `~/.config/omarchy/shell.json` (this widget's own bar-layout entry), so they survive shell restarts.
+
 ## Windows - this workspace
 
 Below the action grid, the panel lists every window on the currently focused workspace (title, truncated to fit). Click a window to focus it, or the ✕ next to it to close it. The list refreshes automatically whenever the panel opens.
@@ -65,6 +69,7 @@ omarchy plugin disable io.github.blafusel.wm-actions
 
 ## Changelog
 
+- **1.3.0** — Added favorites: a star on every WINDOW/CLIPBOARD/KEYS/LAUNCH/SYSTEM button, plus a "Favorites only" filter. Persisted via `bar.shell.updateEntryInline` (same mechanism the tray uses for pinned items) into this widget's shell.json entry.
 - **1.2.2** — Reordered sections: WINDOW, CLIPBOARD, KEYS, LAUNCH, SYSTEM.
 - **1.2.1** — Removed the "Keep panel open" pin: the panel already never auto-closes after firing an action, so the toggle was redundant. It now closes only via the bar icon or IPC.
 - **1.2.0** — Added WINDOW > Close and Stash/Restore (send the focused window to/from the scratchpad, remembering its origin workspace). Fixed Return/Escape/CLIPBOARD not reaching apps whose own JS resets focus on window-blur (e.g. web-based chat inputs): explicit refocus + a short settle delay before the synthetic keypress.
