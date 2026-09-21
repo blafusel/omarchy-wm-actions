@@ -21,11 +21,13 @@ A "Keep panel open" switch sits at the top of the panel. Pin it to fire off seve
 ## Actions
 
 - **LAUNCH** - Launcher, Browser, Terminal
-- **WINDOW** - Scratchpad toggle, Float toggle, Fullscreen toggle
+- **WINDOW** - Scratchpad toggle, Float toggle, Fullscreen toggle, Close, Stash/Restore
 - **CLIPBOARD** - Copy, Paste, Cut (sent as Omarchy's universal SUPER+C/V/X, terminal-aware)
 - **KEYS** - Escape, Return (sent as synthetic key presses)
 - **SYSTEM** - Screenshot, Keybindings cheat sheet
 - **DICTATION** - Start/stop switch for Voxtype dictation (`voxtype record toggle`), live state pulled from `omarchy-voxtype-status`
+
+WINDOW's last two buttons act on whatever window had focus right before the panel opened: **Close** closes it, and the last button toggles between **Stash** (send it to the scratchpad, remembering which workspace it came from) and **Restore** (send it back to that exact workspace — shown automatically whenever that window is currently in the scratchpad). This is a per-window move, different from the **Scratchpad** button above it, which just toggles the whole special scratchpad workspace's visibility without moving anything.
 
 CLIPBOARD and KEYS target the window that had focus right before the panel opened explicitly (via `send_key_state`'s `window` field), rather than relying on ambient seat focus — clicking a button in the panel is itself a pointer event on the panel's own surface, which was enough to disrupt plain ambient-focus delivery for these two groups.
 
@@ -67,6 +69,7 @@ omarchy plugin disable io.github.blafusel.wm-actions
 
 ## Changelog
 
+- **1.2.0** — Added WINDOW > Close and Stash/Restore (send the focused window to/from the scratchpad, remembering its origin workspace). Fixed Return/Escape/CLIPBOARD not reaching apps whose own JS resets focus on window-blur (e.g. web-based chat inputs): explicit refocus + a short settle delay before the synthetic keypress.
 - **1.1.0** — Standalone floating panel (`PanelWindow`, `WlrKeyboardFocus.None`) replacing the click-away bar popup, so the panel never steals keyboard focus and never swallows clicks meant for other windows. Added CLIPBOARD (Copy/Paste/Cut), DICTATION, and the "Keep panel open" pin. CLIPBOARD/KEYS now target the pre-open focused window explicitly via `send_key_state`'s `window` field.
 - **1.0.0** — Initial release: LAUNCH/WINDOW/KEYS/SYSTEM action grid plus the current-workspace window switcher.
 

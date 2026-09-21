@@ -50,14 +50,6 @@ Panel {
       ]
     },
     {
-      title: "WINDOW",
-      items: [
-        { icon: "󰘖", label: "Scratchpad", type: "exec", cmd: ["hyprctl", "dispatch", "hl.dsp.workspace.toggle_special('scratchpad')"] },
-        { icon: "󰹗", label: "Float",      type: "exec", cmd: ["hyprctl", "dispatch", "hl.dsp.window.float({ action = 'toggle' })"] },
-        { icon: "󰊓", label: "Fullscreen", type: "exec", cmd: ["hyprctl", "dispatch", "hl.dsp.window.fullscreen({ mode = 'fullscreen' })"] }
-      ]
-    },
-    {
       title: "CLIPBOARD",
       items: [
         // SUPER mods reuses Omarchy's own "Universal copy/paste/cut" binds
@@ -117,6 +109,18 @@ Panel {
   // open (button press and IPC/keyboard summon alike).
   property string lastFocusedAddress: ""
 
+  // Workspace name of that same captured window ("2", "special:scratchpad",
+  // ...), used to decide which WINDOW button to show (Send to Scratchpad vs.
+  // Send to Desktop) and, combined with scratchpadOrigins below, to send a
+  // window back to the workspace it actually came from instead of just
+  // "whatever workspace is current" when it's pulled back out.
+  property string lastFocusedWorkspaceName: ""
+  readonly property bool lastFocusedInScratchpad: root.lastFocusedWorkspaceName === "special:scratchpad"
+
+  // address -> origin workspace name, recorded right before a window is sent
+  // to the scratchpad so "Send to Desktop" can restore it precisely.
+  property var scratchpadOrigins: ({})
+
   function captureFocusedWindow() {
     if (!activeWindowProc.running) activeWindowProc.running = true
   }
@@ -124,13 +128,49 @@ Panel {
   function handleActiveWindow(raw) {
     var data
     try { data = JSON.parse(raw) } catch (e) { return }
-    if (data && data.address) root.lastFocusedAddress = data.address
+    if (data && data.address) {
+      root.lastFocusedAddress = data.address
+      root.lastFocusedWorkspaceName = (data.workspace && data.workspace.name) ? data.workspace.name : ""
+    }
   }
 
   Process {
     id: activeWindowProc
     command: ["hyprctl", "activewindow", "-j"]
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.handleActiveWindow(text) }
+  }
+
+  function closeActiveWindow() {
+    if (root.lastFocusedAddress) {
+      Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.window.close({ window = 'address:" + root.lastFocusedAddress + "' })"])
+    }
+    root.close()
+  }
+
+  function sendActiveToScratchpad() {
+    var addr = root.lastFocusedAddress
+    if (addr) {
+      root.scratchpadOrigins[addr] = root.lastFocusedWorkspaceName
+      Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.window.move({ window = 'address:" + addr + "', workspace = 'special:scratchpad' })"])
+    }
+    root.close()
+  }
+
+  function sendActiveToDesktop() {
+    var addr = root.lastFocusedAddress
+    if (addr) {
+      var origin = root.scratchpadOrigins[addr]
+      if (origin && origin !== "special:scratchpad") {
+        Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.window.move({ window = 'address:" + addr + "', workspace = '" + origin + "' })"])
+      } else {
+        // No remembered origin (fresh session, or it never went through
+        // "Send to Scratchpad" here) -- fall back to just showing the
+        // scratchpad special workspace, same as the toggle button below.
+        Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.workspace.toggle_special('scratchpad')"])
+      }
+      delete root.scratchpadOrigins[addr]
+    }
+    root.close()
   }
 
   Process {
@@ -158,11 +198,36 @@ Panel {
     return root.lastFocusedAddress ? (", window = 'address:" + root.lastFocusedAddress + "'") : ""
   }
 
+  // Clicking a panel button flips window activation away from the target
+  // (see windowClause note above) and back -- fine for a terminal, but a
+  // web app whose chat/input box blurs (and its own JS collapses or resets
+  // it) on window-blur may not re-focus that same element the instant
+  // activation returns. An explicit hl.dsp.focus plus a short settle delay
+  // before the actual keypress gives that kind of app's own refocus-on-
+  // activate logic (if it has any) a chance to run first. This is a
+  // best-effort mitigation, not a guarantee -- it can't fix a page whose JS
+  // never restores focus on window activation at all.
   function sendKey(key, mods) {
-    Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.send_key_state({ mods = '" + mods + "', key = '" + key + "', state = 'down'" + root.windowClause() + " })"])
-    keyUpTimer.pendingKey = key
-    keyUpTimer.pendingMods = mods
-    keyUpTimer.restart()
+    if (root.lastFocusedAddress) {
+      Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.focus({ window = 'address:" + root.lastFocusedAddress + "' })"])
+    }
+    keyDownTimer.pendingKey = key
+    keyDownTimer.pendingMods = mods
+    keyDownTimer.restart()
+  }
+
+  Timer {
+    id: keyDownTimer
+    interval: 60
+    repeat: false
+    property string pendingKey: ""
+    property string pendingMods: ""
+    onTriggered: {
+      Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.send_key_state({ mods = '" + pendingMods + "', key = '" + pendingKey + "', state = 'down'" + root.windowClause() + " })"])
+      keyUpTimer.pendingKey = pendingKey
+      keyUpTimer.pendingMods = pendingMods
+      keyUpTimer.restart()
+    }
   }
 
   Timer {
@@ -372,6 +437,100 @@ Panel {
                   onClicked: root.runAction(modelData)
                 }
               }
+            }
+          }
+        }
+
+        Column {
+          width: contentColumn.width
+          spacing: Style.space(8)
+
+          PanelSectionHeader {
+            text: "WINDOW"
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+          }
+
+          // Hand-written, not in actionSections: Close/Send-to-Scratchpad/
+          // Send-to-Desktop all need the pre-open captured window address,
+          // and the scratchpad button's icon/label/handler swap depending on
+          // whether that window is currently in the scratchpad.
+          GridLayout {
+            width: parent.width
+            columns: 3
+            columnSpacing: Style.space(8)
+            rowSpacing: Style.space(8)
+
+            Button {
+              Layout.fillWidth: true
+              iconText: "󰘖"
+              text: "Scratchpad"
+              fontSize: Style.font.bodySmall
+              iconSize: Style.font.title
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              bordered: true
+              horizontalPadding: Style.spacing.controlPaddingX
+              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+              onClicked: root.runAction({ type: "exec", cmd: ["hyprctl", "dispatch", "hl.dsp.workspace.toggle_special('scratchpad')"] })
+            }
+
+            Button {
+              Layout.fillWidth: true
+              iconText: "󰹗"
+              text: "Float"
+              fontSize: Style.font.bodySmall
+              iconSize: Style.font.title
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              bordered: true
+              horizontalPadding: Style.spacing.controlPaddingX
+              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+              onClicked: root.runAction({ type: "exec", cmd: ["hyprctl", "dispatch", "hl.dsp.window.float({ action = 'toggle' })"] })
+            }
+
+            Button {
+              Layout.fillWidth: true
+              iconText: "󰊓"
+              text: "Fullscreen"
+              fontSize: Style.font.bodySmall
+              iconSize: Style.font.title
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              bordered: true
+              horizontalPadding: Style.spacing.controlPaddingX
+              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+              onClicked: root.runAction({ type: "exec", cmd: ["hyprctl", "dispatch", "hl.dsp.window.fullscreen({ mode = 'fullscreen' })"] })
+            }
+
+            Button {
+              Layout.fillWidth: true
+              iconText: "󰖭"
+              text: "Close"
+              tooltipText: "Close window"
+              fontSize: Style.font.bodySmall
+              iconSize: Style.font.title
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              bordered: true
+              horizontalPadding: Style.spacing.controlPaddingX
+              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+              onClicked: root.closeActiveWindow()
+            }
+
+            Button {
+              Layout.fillWidth: true
+              iconText: root.lastFocusedInScratchpad ? "󰄝" : "󰄠"
+              text: root.lastFocusedInScratchpad ? "Restore" : "Stash"
+              tooltipText: root.lastFocusedInScratchpad ? "Send back to its original workspace" : "Send to scratchpad"
+              fontSize: Style.font.bodySmall
+              iconSize: Style.font.title
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              bordered: true
+              horizontalPadding: Style.spacing.controlPaddingX
+              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+              onClicked: root.lastFocusedInScratchpad ? root.sendActiveToDesktop() : root.sendActiveToScratchpad()
             }
           }
         }
