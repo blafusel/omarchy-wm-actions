@@ -49,8 +49,9 @@ Panel {
     {
       title: "KEYS",
       items: [
-        { id: "keys.escape", icon: "⎋", label: "Escape", type: "key", key: "Escape" },
-        { id: "keys.return", icon: "⏎", label: "Return", type: "key", key: "Return" }
+        { id: "keys.escape",    icon: "⎋", label: "Escape",    type: "key", key: "Escape" },
+        { id: "keys.return",    icon: "⏎", label: "Return",    type: "key", key: "Return" },
+        { id: "keys.backspace", icon: "󰁮", label: "Backspace", type: "key", key: "BackSpace" }
       ]
     },
     {
