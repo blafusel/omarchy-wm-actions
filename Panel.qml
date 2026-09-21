@@ -3,6 +3,7 @@ import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
+import Quickshell.Hyprland
 import qs.Ui
 import qs.Commons
 
@@ -335,6 +336,26 @@ Panel {
     if (opened) {
       refreshWindows()
       captureFocusedWindow()
+    }
+  }
+
+  // The panel no longer auto-closes, so it can sit open across workspace
+  // switches, window moves, and focus changes -- refresh live instead of
+  // leaving the windows list and the captured target window (which drives
+  // CLIPBOARD/KEYS targeting and the WINDOW section's Stash/Restore label)
+  // stuck on whatever was true at the moment the panel first opened.
+  Connections {
+    target: Hyprland
+    function onRawEvent(event) {
+      if (!root.opened || !event || !event.name) return
+      var name = String(event.name)
+      if (name === "workspace" || name === "workspacev2" || name === "focusedmon" || name === "focusedmonv2"
+          || name === "activewindow" || name === "activewindowv2"
+          || name === "openwindow" || name === "closewindow"
+          || name === "movewindow" || name === "movewindowv2") {
+        root.refreshWindows()
+        root.captureFocusedWindow()
+      }
     }
   }
 

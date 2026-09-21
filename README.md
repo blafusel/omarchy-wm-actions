@@ -25,6 +25,8 @@ Built for dual-monitor setups where one screen is driven from a different PC and
 
 WINDOW's last two buttons act on whatever window had focus right before the panel opened: **Close** closes it, and the last button toggles between **Stash** (send it to the scratchpad, remembering which workspace it came from) and **Restore** (send it back to that exact workspace — shown automatically whenever that window is currently in the scratchpad). This is a per-window move, different from the **Scratchpad** button above it, which just toggles the whole special scratchpad workspace's visibility without moving anything.
 
+Since the panel stays open across workspace switches, the captured window (and the windows list below) stay live too — driven off Hyprland's own event stream, not just a one-time snapshot from when the panel opened. Switch workspaces, move a window into the scratchpad some other way, or focus a different window, and Stash/Restore and the windows list update to match without needing to close and reopen the panel.
+
 CLIPBOARD and KEYS target the window that had focus right before the panel opened explicitly (via `send_key_state`'s `window` field), rather than relying on ambient seat focus — clicking a button in the panel is itself a pointer event on the panel's own surface, which was enough to disrupt plain ambient-focus delivery for these two groups.
 
 ## Favorites
@@ -69,6 +71,7 @@ omarchy plugin disable io.github.blafusel.wm-actions
 
 ## Changelog
 
+- **1.3.1** — The windows list and the WINDOW section's Stash/Restore button now update live while the panel stays open (workspace switches, window open/close/move, focus changes), driven off Hyprland's event stream instead of a one-time snapshot from when the panel opened.
 - **1.3.0** — Added favorites: a star on every WINDOW/CLIPBOARD/KEYS/LAUNCH/SYSTEM button, plus a "Favorites only" filter. Persisted via `bar.shell.updateEntryInline` (same mechanism the tray uses for pinned items) into this widget's shell.json entry.
 - **1.2.2** — Reordered sections: WINDOW, CLIPBOARD, KEYS, LAUNCH, SYSTEM.
 - **1.2.1** — Removed the "Keep panel open" pin: the panel already never auto-closes after firing an action, so the toggle was redundant. It now closes only via the bar icon or IPC.
