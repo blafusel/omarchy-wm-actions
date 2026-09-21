@@ -10,6 +10,19 @@ Panel {
   moduleName: "io.github.blafusel.wm-actions"
   ipcTarget: "io.github.blafusel.wm-actions"
 
+  // Pin: keeps the panel open through outside clicks, the bar-icon toggle,
+  // Escape, and the post-action auto-close, so it can sit open while you
+  // work. Only the sticky toggle itself can release it.
+  property bool sticky: false
+
+  // Overrides the base Panel's close() -- same pattern omarchy.network's
+  // Panel.qml uses (root.controller is the public alias for the base's
+  // internal PanelController) -- to gate every close path on `sticky`.
+  function close() {
+    if (root.sticky) return
+    root.controller.hide()
+  }
+
   // ---- action grid catalog, grouped by function ----
   // type "exec"  -> cmd is argv passed straight to Quickshell.execDetached
   // type "key"   -> key is a keysym name injected via a down/up send_key_state pair
@@ -28,6 +41,18 @@ Panel {
         { icon: "󰘖", label: "Scratchpad", type: "exec", cmd: ["hyprctl", "dispatch", "hl.dsp.workspace.toggle_special('scratchpad')"] },
         { icon: "󰹗", label: "Float",      type: "exec", cmd: ["hyprctl", "dispatch", "hl.dsp.window.float({ action = 'toggle' })"] },
         { icon: "󰊓", label: "Fullscreen", type: "exec", cmd: ["hyprctl", "dispatch", "hl.dsp.window.fullscreen({ mode = 'fullscreen' })"] }
+      ]
+    },
+    {
+      title: "CLIPBOARD",
+      items: [
+        // SUPER mods reuses Omarchy's own "Universal copy/paste/cut" binds
+        // (default/hypr/bindings/clipboard.lua), which pick the right raw
+        // key per-app (e.g. Ctrl+Insert in terminals) -- so these stay
+        // correct instead of just blasting Ctrl+C into a shell.
+        { icon: "󰆏", label: "Copy",  type: "key", key: "C", mods: "SUPER" },
+        { icon: "󰆒", label: "Paste", type: "key", key: "V", mods: "SUPER" },
+        { icon: "󰆐", label: "Cut",   type: "key", key: "X", mods: "SUPER" }
       ]
     },
     {
@@ -51,8 +76,66 @@ Panel {
   property var windows: []
   property int currentWorkspaceId: 0
 
+  // Voxtype dictation state, streamed continuously (not gated on the panel
+  // being open) so the switch already shows the right state the moment the
+  // panel opens, same as the bar's own Dictation indicator.
+  property string dictationState: "idle"
+  readonly property bool dictationRecording: dictationState === "recording"
+  readonly property bool dictationTranscribing: dictationState === "transcribing"
+
+  function handleDictationStatus(raw) {
+    var data = Util.parseModuleJson(raw)
+    root.dictationState = String(data.alt || data.class || "idle")
+  }
+
+  // The window that had keyboard focus right before this panel stole it by
+  // opening (KeyboardPanel primes WlrKeyboardFocus.Exclusive on map). Voxtype
+  // types its transcript into whatever holds keyboard focus at record-stop
+  // time, so without restoring this, dictation started/stopped from the
+  // panel goes nowhere. Captured on every open (button press and IPC/keyboard
+  // summon alike) via captureFocusedWindow() below.
+  property string dictationTargetAddress: ""
+
+  function captureFocusedWindow() {
+    if (!activeWindowProc.running) activeWindowProc.running = true
+  }
+
+  function handleActiveWindow(raw) {
+    var data
+    try { data = JSON.parse(raw) } catch (e) { return }
+    if (data && data.address) root.dictationTargetAddress = data.address
+  }
+
+  Process {
+    id: activeWindowProc
+    command: ["hyprctl", "activewindow", "-j"]
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.handleActiveWindow(text) }
+  }
+
+  // Refocus the captured target window (hl.dsp.focus moves real keyboard
+  // focus even while this panel's layer surface stays mapped -- OnDemand
+  // only holds focus, it doesn't fight an explicit dispatch), then
+  // start/stop the recording once focus has settled. Respects `sticky` like
+  // every other action (root.close(), not a forced controller.hide()): a
+  // pinned panel stays open, the refocus dispatch alone is enough to route
+  // voxtype's typed transcript to the target window instead of the panel.
+  function toggleDictation() {
+    if (root.dictationTargetAddress) {
+      Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.focus({ window = 'address:" + root.dictationTargetAddress + "' })"])
+    }
+    root.close()
+    dictationStartTimer.restart()
+  }
+
+  Timer {
+    id: dictationStartTimer
+    interval: 80
+    repeat: false
+    onTriggered: Quickshell.execDetached(["voxtype", "record", "toggle"])
+  }
+
   function runAction(action) {
-    if (action.type === "key") sendKey(action.key)
+    if (action.type === "key") sendKey(action.key, action.mods || "")
     else Quickshell.execDetached(action.cmd)
     root.close()
   }
@@ -61,9 +144,10 @@ Panel {
   // mirrors Omarchy's own "Universal cut" bind in
   // default/hypr/bindings/clipboard.lua, adopted there specifically to avoid
   // a Hyprland send_shortcut stuck-key bug (hyprwm/Hyprland#14099).
-  function sendKey(key) {
-    Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.send_key_state({ mods = '', key = '" + key + "', state = 'down' })"])
+  function sendKey(key, mods) {
+    Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.send_key_state({ mods = '" + mods + "', key = '" + key + "', state = 'down' })"])
     keyUpTimer.pendingKey = key
+    keyUpTimer.pendingMods = mods
     keyUpTimer.restart()
   }
 
@@ -72,7 +156,8 @@ Panel {
     interval: 50
     repeat: false
     property string pendingKey: ""
-    onTriggered: Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.send_key_state({ mods = '', key = '" + pendingKey + "', state = 'up' })"])
+    property string pendingMods: ""
+    onTriggered: Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.send_key_state({ mods = '" + pendingMods + "', key = '" + pendingKey + "', state = 'up' })"])
   }
 
   function refreshWindows() {
@@ -139,7 +224,15 @@ Panel {
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.handleClients(text) }
   }
 
-  onOpenedChanged: if (opened) refreshWindows()
+  // Covers every way the panel can open: the bar-icon press below fires
+  // before root.toggle() runs (earliest, most reliable capture), and this
+  // catches IPC/keyboard-summoned opens that skip the button entirely.
+  onOpenedChanged: {
+    if (opened) {
+      refreshWindows()
+      captureFocusedWindow()
+    }
+  }
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -150,7 +243,10 @@ Panel {
     bar: root.bar
     text: "󰍜"
     tooltipText: "WM Actions"
-    onPressed: function(b) { root.toggle() }
+    onPressed: function(b) {
+      if (!root.opened) root.captureFocusedWindow()
+      root.toggle()
+    }
   }
 
   KeyboardPanel {
@@ -175,6 +271,20 @@ Panel {
         anchors.right: parent.right
         anchors.top: parent.top
         spacing: Style.space(14)
+
+        Toggle {
+          width: column.width
+          label: "Keep panel open"
+          description: "Ignore outside clicks and don't close after an action"
+          checked: root.sticky
+          foreground: root.bar.foreground
+          fontFamily: root.bar.fontFamily
+          onClicked: root.sticky = !root.sticky
+        }
+
+        PanelSeparator {
+          foreground: root.bar.foreground
+        }
 
         Repeater {
           model: root.actionSections
@@ -214,6 +324,37 @@ Panel {
                 }
               }
             }
+          }
+        }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(8)
+
+          PanelSectionHeader {
+            text: "DICTATION"
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+          }
+
+          // Standalone (not in actionSections): it's a stateful switch, not
+          // a fire-and-forget action, so it needs its own icon/label/active
+          // binding and must not close the panel on click.
+          Button {
+            width: parent.width
+            leftAlign: true
+            iconText: root.dictationRecording ? "󰓛" : "󰍬"
+            iconSpinning: root.dictationTranscribing
+            text: root.dictationRecording ? "Stop dictation" : (root.dictationTranscribing ? "Transcribing…" : "Start dictation")
+            fontSize: Style.font.bodySmall
+            iconSize: Style.font.title
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            bordered: true
+            active: root.dictationRecording
+            horizontalPadding: Style.spacing.controlPaddingX
+            verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+            onClicked: root.toggleDictation()
           }
         }
 
