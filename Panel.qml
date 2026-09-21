@@ -38,13 +38,12 @@ Panel {
     {
       title: "CLIPBOARD",
       items: [
-        // SUPER mods reuses Omarchy's own "Universal copy/paste/cut" binds
-        // (default/hypr/bindings/clipboard.lua), which pick the right raw
-        // key per-app (e.g. Ctrl+Insert in terminals) -- so these stay
-        // correct instead of just blasting Ctrl+C into a shell.
-        { id: "clipboard.copy",  icon: "󰆏", label: "Copy",  type: "key", key: "C", mods: "SUPER" },
-        { id: "clipboard.paste", icon: "󰆒", label: "Paste", type: "key", key: "V", mods: "SUPER" },
-        { id: "clipboard.cut",   icon: "󰆐", label: "Cut",   type: "key", key: "X", mods: "SUPER" }
+        // See copySelection/cutSelection/pasteClipboard: these no longer go
+        // through Hyprland's "Universal clipboard" SUPER+C/V/X binds, which
+        // never fire for synthetic input.
+        { id: "clipboard.copy",  icon: "󰆏", label: "Copy",  type: "copy" },
+        { id: "clipboard.paste", icon: "󰆒", label: "Paste", type: "paste" },
+        { id: "clipboard.cut",   icon: "󰆐", label: "Cut",   type: "cut" }
       ]
     },
     {
@@ -80,6 +79,7 @@ Panel {
   // updates itself.
   readonly property var favorites: root.setting("favorites", [])
   readonly property bool favoritesOnly: root.setting("favoritesOnly", false)
+
 
   function isFavorite(favId) {
     return root.favorites.indexOf(favId) !== -1
@@ -145,6 +145,10 @@ Panel {
   // Workspace name of that same captured window ("2", "special:scratchpad", ...).
   property string lastFocusedWorkspaceName: ""
 
+  // Same window's Hyprland window-rule tags (e.g. "terminal*"), used to pick
+  // Ctrl+V vs. Shift+Insert for Paste -- see pasteClipboard() below.
+  property bool lastFocusedIsTerminal: false
+
   // address -> origin workspace name, recorded right before a window is sent
   // to the scratchpad so Restore can send it back precisely. Session-only
   // (not persisted): a window stashed in an earlier session, or by some
@@ -162,6 +166,11 @@ Panel {
     if (data && data.address) {
       root.lastFocusedAddress = data.address
       root.lastFocusedWorkspaceName = (data.workspace && data.workspace.name) ? data.workspace.name : ""
+      // Dynamic tags carry a trailing "*" (see Omarchy's own
+      // active_window_is_terminal() in default/hypr/bindings/clipboard.lua).
+      root.lastFocusedIsTerminal = Array.isArray(data.tags) && data.tags.some(function(t) {
+        return String(t).replace(/\*$/, "") === "terminal"
+      })
     }
   }
 
@@ -208,7 +217,40 @@ Panel {
 
   function runAction(action) {
     if (action.type === "key") sendKey(action.key, action.mods || "")
+    else if (action.type === "copy") copySelection()
+    else if (action.type === "cut") cutSelection()
+    else if (action.type === "paste") pasteClipboard()
     else Quickshell.execDetached(action.cmd)
+  }
+
+  // Copy/Cut/Paste used to send SUPER+C/V/X hoping Hyprland's global
+  // "Universal clipboard" binds (default/hypr/bindings/clipboard.lua) would
+  // fire and translate to the right raw shortcut per app. They never did --
+  // verified directly: even SUPER+S (toggle scratchpad, a trivial bind)
+  // silently no-ops when sent via send_key_state, workspace never changes.
+  // Global keybinds apparently only respond to real hardware input, not
+  // synthetic virtual-keyboard events -- likely a deliberate wlroots/
+  // Hyprland boundary against exactly this kind of automation, not
+  // something we can route around with cleverer key sequencing.
+  //
+  // Copy/Cut instead read the Wayland PRIMARY SELECTION -- auto-populated
+  // by most apps/terminals whenever text is selected, independent of any
+  // keypress at all (confirmed live: selecting text in the Claude desktop
+  // app populated it with zero synthetic input involved). Paste falls back
+  // to a plain Ctrl+V/Shift+Insert: an ordinary app/terminal-level
+  // shortcut, not a compositor bind, so send_key_state delivers it
+  // reliably the same way it does Escape/Return.
+  function copySelection() {
+    Quickshell.execDetached(["bash", "-c", "wl-paste --primary --no-newline 2>/dev/null | wl-copy"])
+  }
+
+  function cutSelection() {
+    Quickshell.execDetached(["bash", "-c", "wl-paste --primary --no-newline 2>/dev/null | wl-copy"])
+    sendKey("Delete", "")
+  }
+
+  function pasteClipboard() {
+    sendKey(root.lastFocusedIsTerminal ? "Insert" : "V", root.lastFocusedIsTerminal ? "SHIFT" : "CTRL")
   }
 
   // send_key_state (down, then up ~50ms later) instead of send_shortcut --

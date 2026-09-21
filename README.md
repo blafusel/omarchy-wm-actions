@@ -17,7 +17,7 @@ Built for dual-monitor setups where one screen is driven from a different PC and
 ## Actions
 
 - **WINDOW** - Scratchpad toggle, Float toggle, Fullscreen toggle, Close, Stash
-- **CLIPBOARD** - Copy, Paste, Cut (sent as Omarchy's universal SUPER+C/V/X, terminal-aware)
+- **CLIPBOARD** - Copy, Paste, Cut
 - **KEYS** - Escape, Return (sent as synthetic key presses)
 - **LAUNCH** - Launcher, Browser, Terminal
 - **SYSTEM** - Screenshot, Keybindings cheat sheet
@@ -29,7 +29,9 @@ Bringing a window back out is a separate step, on purpose: by the time you come 
 
 Since the panel stays open across workspace switches, the captured window, the STASHED list, and the windows list below all stay live too — driven off Hyprland's own event stream, not just a one-time snapshot from when the panel opened.
 
-CLIPBOARD and KEYS target the window that had focus right before the panel opened explicitly (via `send_key_state`'s `window` field), rather than relying on ambient seat focus — clicking a button in the panel is itself a pointer event on the panel's own surface, which was enough to disrupt plain ambient-focus delivery for these two groups.
+KEYS targets the window that had focus right before the panel opened explicitly (via `send_key_state`'s `window` field), rather than relying on ambient seat focus — clicking a button in the panel is itself a pointer event on the panel's own surface, which was enough to disrupt plain ambient-focus delivery.
+
+CLIPBOARD doesn't send SUPER+C/V/X anymore. Hyprland's global "Universal clipboard" binds never fire for synthetic virtual-keyboard input at all — confirmed directly: even `SUPER+S` (toggle scratchpad) silently no-ops when sent this way, the workspace never changes. Global keybinds apparently only respond to real hardware input, likely a deliberate compositor-level boundary. Copy/Cut instead read the Wayland **primary selection** (auto-populated by most apps/terminals whenever text is selected, no keypress involved at all) and write it to the clipboard directly; Cut then removes the selection with a plain Delete key. Paste sends an ordinary Ctrl+V (Shift+Insert in a terminal, where Ctrl+V usually means something else) — a normal app/terminal-level shortcut, not a compositor bind, so it's delivered reliably the same way Escape/Return are.
 
 ## Favorites
 
@@ -73,6 +75,7 @@ omarchy plugin disable io.github.blafusel.wm-actions
 
 ## Changelog
 
+- **1.4.0** — Fixed CLIPBOARD: Copy/Paste/Cut sent SUPER+C/V/X expecting Hyprland's global "Universal clipboard" binds to fire, but those never respond to synthetic input at all (confirmed directly: even `SUPER+S` silently no-ops the same way). Copy/Cut now read the Wayland primary selection instead (no keypress involved); Paste sends a plain Ctrl+V/Shift+Insert.
 - **1.3.2** — Fixed Restore: the old single Stash/Restore toggle button only ever tracked the last-focused window, so it broke the moment focus moved on (the entire point of stashing something "for later"). Replaced with a dedicated STASHED list showing every window actually in the scratchpad, each independently restorable to its remembered origin workspace (or the current one, if it got there some other way).
 - **1.3.1** — The windows list and the WINDOW section's Stash/Restore button now update live while the panel stays open (workspace switches, window open/close/move, focus changes), driven off Hyprland's event stream instead of a one-time snapshot from when the panel opened.
 - **1.3.0** — Added favorites: a star on every WINDOW/CLIPBOARD/KEYS/LAUNCH/SYSTEM button, plus a "Favorites only" filter. Persisted via `bar.shell.updateEntryInline` (same mechanism the tray uses for pinned items) into this widget's shell.json entry.
