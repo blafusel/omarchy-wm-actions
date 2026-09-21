@@ -34,14 +34,6 @@ Panel {
   // type "key"   -> key is a keysym name injected via a down/up send_key_state pair
   readonly property var actionSections: [
     {
-      title: "LAUNCH",
-      items: [
-        { icon: "󱂬", label: "Launcher", type: "exec", cmd: ["omarchy-menu", "toggle"] },
-        { icon: "󰖟", label: "Browser",  type: "exec", cmd: ["omarchy-launch-browser"] },
-        { icon: "", label: "Terminal", type: "exec", cmd: ["omarchy-launch-terminal"] }
-      ]
-    },
-    {
       title: "CLIPBOARD",
       items: [
         // SUPER mods reuses Omarchy's own "Universal copy/paste/cut" binds
@@ -58,6 +50,14 @@ Panel {
       items: [
         { icon: "⎋", label: "Escape", type: "key", key: "Escape" },
         { icon: "⏎", label: "Return", type: "key", key: "Return" }
+      ]
+    },
+    {
+      title: "LAUNCH",
+      items: [
+        { icon: "󱂬", label: "Launcher", type: "exec", cmd: ["omarchy-menu", "toggle"] },
+        { icon: "󰖟", label: "Browser",  type: "exec", cmd: ["omarchy-launch-browser"] },
+        { icon: "", label: "Terminal", type: "exec", cmd: ["omarchy-launch-terminal"] }
       ]
     },
     {
@@ -373,47 +373,6 @@ Panel {
         width: card.width - card.contentLeftInset - card.contentRightInset
         spacing: Style.space(14)
 
-        Repeater {
-          model: root.actionSections
-          delegate: Column {
-            id: sectionColumn
-            required property var modelData
-            width: contentColumn.width
-            spacing: Style.space(8)
-
-            PanelSectionHeader {
-              text: sectionColumn.modelData.title
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-            }
-
-            GridLayout {
-              width: parent.width
-              columns: 3
-              columnSpacing: Style.space(8)
-              rowSpacing: Style.space(8)
-
-              Repeater {
-                model: sectionColumn.modelData.items
-                delegate: Button {
-                  required property var modelData
-                  Layout.fillWidth: true
-                  iconText: modelData.icon
-                  text: modelData.label
-                  fontSize: Style.font.bodySmall
-                  iconSize: Style.font.title
-                  foreground: root.bar.foreground
-                  fontFamily: root.bar.fontFamily
-                  bordered: true
-                  horizontalPadding: Style.spacing.controlPaddingX
-                  verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
-                  onClicked: root.runAction(modelData)
-                }
-              }
-            }
-          }
-        }
-
         Column {
           width: contentColumn.width
           spacing: Style.space(8)
@@ -504,6 +463,47 @@ Panel {
               horizontalPadding: Style.spacing.controlPaddingX
               verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
               onClicked: root.lastFocusedInScratchpad ? root.sendActiveToDesktop() : root.sendActiveToScratchpad()
+            }
+          }
+        }
+
+        Repeater {
+          model: root.actionSections
+          delegate: Column {
+            id: sectionColumn
+            required property var modelData
+            width: contentColumn.width
+            spacing: Style.space(8)
+
+            PanelSectionHeader {
+              text: sectionColumn.modelData.title
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+            }
+
+            GridLayout {
+              width: parent.width
+              columns: 3
+              columnSpacing: Style.space(8)
+              rowSpacing: Style.space(8)
+
+              Repeater {
+                model: sectionColumn.modelData.items
+                delegate: Button {
+                  required property var modelData
+                  Layout.fillWidth: true
+                  iconText: modelData.icon
+                  text: modelData.label
+                  fontSize: Style.font.bodySmall
+                  iconSize: Style.font.title
+                  foreground: root.bar.foreground
+                  fontFamily: root.bar.fontFamily
+                  bordered: true
+                  horizontalPadding: Style.spacing.controlPaddingX
+                  verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+                  onClicked: root.runAction(modelData)
+                }
+              }
             }
           }
         }
