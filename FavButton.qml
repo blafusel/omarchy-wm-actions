@@ -19,6 +19,18 @@ Item {
   property string fontFamily: Style.font.family
   property bool isFavorite: false
 
+  // Press-and-hold repeat, for actions like Backspace where holding down a
+  // real key auto-repeats. Off by default (every other button keeps plain
+  // Button click behavior untouched). When on, repeatInterval must stay
+  // comfortably longer than the caller's own dispatch cycle (e.g. sendKey's
+  // ~110ms explicit-refocus + down/up settle chain) -- firing clicked()
+  // faster than that just keeps restarting the caller's own timers before
+  // they ever get to dispatch anything, so backspace would silently never
+  // fire. 150ms default clears that with margin.
+  property bool repeatOnHold: false
+  property int repeatInitialDelay: 450
+  property int repeatInterval: 150
+
   signal clicked()
   signal favoriteToggled()
 
@@ -31,7 +43,7 @@ Item {
     iconText: root.iconText
     text: root.text
     tooltipText: root.tooltipText
-    active: root.active
+    active: root.active || repeatArea.pressed
     iconSpinning: root.iconSpinning
     leftAlign: root.leftAlign
     fontSize: Style.font.bodySmall
@@ -41,7 +53,44 @@ Item {
     bordered: true
     horizontalPadding: Style.spacing.controlPaddingX
     verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
-    onClicked: root.clicked()
+    onClicked: if (!root.repeatOnHold) root.clicked()
+  }
+
+  // Sits above btn's own MouseArea (so it owns every click) but below the
+  // star (z: 10), and is a complete no-op -- disabled, so events pass
+  // through to btn underneath -- unless repeatOnHold is on.
+  MouseArea {
+    id: repeatArea
+    anchors.fill: btn
+    z: 5
+    enabled: root.repeatOnHold
+    cursorShape: Qt.PointingHandCursor
+    onPressed: {
+      root.clicked()
+      repeatStartTimer.restart()
+    }
+    onReleased: {
+      repeatStartTimer.stop()
+      repeatIntervalTimer.stop()
+    }
+    onCanceled: {
+      repeatStartTimer.stop()
+      repeatIntervalTimer.stop()
+    }
+  }
+
+  Timer {
+    id: repeatStartTimer
+    interval: root.repeatInitialDelay
+    repeat: false
+    onTriggered: repeatIntervalTimer.restart()
+  }
+
+  Timer {
+    id: repeatIntervalTimer
+    interval: root.repeatInterval
+    repeat: true
+    onTriggered: root.clicked()
   }
 
   Text {

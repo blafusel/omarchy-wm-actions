@@ -51,7 +51,7 @@ Panel {
       items: [
         { id: "keys.escape",    icon: "⎋", label: "Escape",    type: "key", key: "Escape" },
         { id: "keys.return",    icon: "⏎", label: "Return",    type: "key", key: "Return" },
-        { id: "keys.backspace", icon: "󰁮", label: "Backspace", type: "key", key: "BackSpace" }
+        { id: "keys.backspace", icon: "󰁮", label: "Backspace", type: "key", key: "BackSpace", repeat: true }
       ]
     },
     {
@@ -610,6 +610,7 @@ Panel {
                   foreground: root.bar.foreground
                   fontFamily: root.bar.fontFamily
                   isFavorite: root.isFavorite(modelData.id)
+                  repeatOnHold: !!modelData.repeat
                   onFavoriteToggled: root.toggleFavorite(modelData.id)
                   onClicked: root.runAction(modelData)
                 }
