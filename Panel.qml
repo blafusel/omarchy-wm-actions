@@ -6,20 +6,19 @@ import Quickshell.Wayland
 import qs.Ui
 import qs.Commons
 
-// EXPERIMENTAL branch (floating-window): a standalone PanelWindow instead of
-// the usual KeyboardPanel-anchored click-away popup. Two problems this fixes
-// that the pin toggle on the KeyboardPanel version couldn't:
+// Standalone PanelWindow instead of the usual KeyboardPanel-anchored
+// click-away popup. Two problems this fixes that a pin toggle on
+// KeyboardPanel couldn't:
 //   1. WlrKeyboardFocus.None below means opening/clicking this panel never
-//      steals keyboard focus, so dictation no longer needs any capture/
-//      refocus workaround -- the window you were dictating into just keeps
-//      focus the whole time.
+//      steals keyboard focus -- the window you were using just keeps focus
+//      the whole time (verified live: a synthetic keypress reaches a
+//      focused terminal while the panel is open).
 //   2. There's no full-screen click-catcher, so clicking other windows while
 //      this panel is open reaches them normally instead of being swallowed.
 // Tradeoff: no click-away-to-dismiss, no fade animation, and no mutual
 // exclusion with other bar popups (opening this doesn't close another popup
 // and vice versa) -- KeyboardPanel owned all of that internally.
-// Roll back to the previous (KeyboardPanel-based) version with:
-//   git -C ~/.config/omarchy/plugins/blafusel.wm-actions checkout master
+// Previous KeyboardPanel-based version: tag v1.0.0 (or the pre-1.1.0 commits).
 Panel {
   id: root
   moduleName: "io.github.blafusel.wm-actions"
@@ -103,11 +102,35 @@ Panel {
     root.dictationState = String(data.alt || data.class || "idle")
   }
 
-  // No focus capture/restore needed here (unlike the KeyboardPanel version):
-  // this panel never takes keyboard focus in the first place, so whatever
-  // window you were dictating into stays focused the whole time.
   function toggleDictation() {
     Quickshell.execDetached(["voxtype", "record", "toggle"])
+  }
+
+  // The window that had keyboard focus right before this panel opened.
+  // sendKey() below targets it explicitly via send_key_state's `window`
+  // field rather than trusting ambient seat focus -- clicking a button in
+  // this panel is a real pointer event on its surface, and empirically that
+  // was enough to disrupt which window Hyprland considered keyboard-focused
+  // at the moment the synthetic key landed (KEYS/CLIPBOARD actions fire
+  // ~0ms after the click; dictation's own trigger doesn't need focus at all,
+  // which is why only KEYS/CLIPBOARD showed the symptom). Captured on every
+  // open (button press and IPC/keyboard summon alike).
+  property string lastFocusedAddress: ""
+
+  function captureFocusedWindow() {
+    if (!activeWindowProc.running) activeWindowProc.running = true
+  }
+
+  function handleActiveWindow(raw) {
+    var data
+    try { data = JSON.parse(raw) } catch (e) { return }
+    if (data && data.address) root.lastFocusedAddress = data.address
+  }
+
+  Process {
+    id: activeWindowProc
+    command: ["hyprctl", "activewindow", "-j"]
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.handleActiveWindow(text) }
   }
 
   Process {
@@ -127,9 +150,16 @@ Panel {
   // send_key_state (down, then up ~50ms later) instead of send_shortcut --
   // mirrors Omarchy's own "Universal cut" bind in
   // default/hypr/bindings/clipboard.lua, adopted there specifically to avoid
-  // a Hyprland send_shortcut stuck-key bug (hyprwm/Hyprland#14099).
+  // a Hyprland send_shortcut stuck-key bug (hyprwm/Hyprland#14099). The
+  // `window` field targets the captured pre-open window explicitly instead
+  // of trusting ambient seat focus (see lastFocusedAddress above); falls
+  // back to no `window` field (ambient focus) if nothing was captured.
+  function windowClause() {
+    return root.lastFocusedAddress ? (", window = 'address:" + root.lastFocusedAddress + "'") : ""
+  }
+
   function sendKey(key, mods) {
-    Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.send_key_state({ mods = '" + mods + "', key = '" + key + "', state = 'down' })"])
+    Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.send_key_state({ mods = '" + mods + "', key = '" + key + "', state = 'down'" + root.windowClause() + " })"])
     keyUpTimer.pendingKey = key
     keyUpTimer.pendingMods = mods
     keyUpTimer.restart()
@@ -141,7 +171,7 @@ Panel {
     repeat: false
     property string pendingKey: ""
     property string pendingMods: ""
-    onTriggered: Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.send_key_state({ mods = '" + pendingMods + "', key = '" + pendingKey + "', state = 'up' })"])
+    onTriggered: Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.send_key_state({ mods = '" + pendingMods + "', key = '" + pendingKey + "', state = 'up'" + root.windowClause() + " })"])
   }
 
   function refreshWindows() {
@@ -208,7 +238,15 @@ Panel {
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.handleClients(text) }
   }
 
-  onOpenedChanged: if (opened) refreshWindows()
+  // Covers every way the panel can open: the bar-icon press below fires
+  // before root.toggle() runs (earliest, most reliable capture), and this
+  // catches IPC/keyboard-summoned opens that skip the button entirely.
+  onOpenedChanged: {
+    if (opened) {
+      refreshWindows()
+      captureFocusedWindow()
+    }
+  }
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -219,7 +257,10 @@ Panel {
     bar: root.bar
     text: "󰍜"
     tooltipText: "WM Actions"
-    onPressed: function(b) { root.toggle() }
+    onPressed: function(b) {
+      if (!root.opened) root.captureFocusedWindow()
+      root.toggle()
+    }
   }
 
   // Same window the bar-icon button renders in, used only to pick the right
