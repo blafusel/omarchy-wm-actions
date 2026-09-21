@@ -10,9 +10,22 @@ Click the bar icon to open a panel with four action groups and a live list of wi
 
 Built for dual-monitor setups where one screen is driven from a different PC and the keyboard is switched over to it (KVM, Bluetooth, whatever). Reaching for a Hyprland keybind on the Omarchy side then means reconnecting the keyboard first. This widget puts the common actions and a workspace window switcher behind mouse clicks instead, so you don't have to switch input back just to float a window, open an app, or check a keybinding.
 
-## Keep panel open
+## Standalone floating panel
 
-A "Keep panel open" switch sits at the top of the panel. Pin it and the panel ignores outside clicks, the bar icon, Escape, and the auto-close after an action — so you can fire off several actions in a row or leave it parked on screen. It's a pin, not a free-floating window: the panel still stays docked at its usual spot next to the bar icon, not draggable. Unpin the switch to let normal closing behavior resume.
+This branch replaces the usual click-away-to-dismiss bar popup with its own floating window (`PanelWindow`, `WlrKeyboardFocus.None`). Two things follow from that:
+
+- **It never steals keyboard focus.** Opening it or clicking its buttons doesn't touch whatever window you were using — that's what makes the DICTATION switch actually work: the window you're dictating into keeps focus the whole time, panel open or not.
+- **It doesn't swallow clicks.** There's no full-screen catcher, so clicking another window while this panel is open reaches that window normally, and the panel just stays open until you explicitly close it (bar icon, or an action button when not pinned).
+
+A "Keep panel open" switch at the top controls only the post-action auto-close now (outside clicks and the bar icon never close it either way) — pin it to fire off several grid actions in a row without the panel closing between clicks.
+
+Tradeoff versus the standard popup: no fade animation, and no mutual exclusion with other bar popups (opening this doesn't close another one, and vice versa).
+
+**Rollback:** this is the `floating-window` branch. If it misbehaves, go back to the previous (KeyboardPanel-based, click-away-dismiss) version with:
+
+```bash
+git -C ~/.config/omarchy/plugins/blafusel.wm-actions checkout master
+```
 
 ## Actions
 
@@ -21,7 +34,7 @@ A "Keep panel open" switch sits at the top of the panel. Pin it and the panel ig
 - **CLIPBOARD** - Copy, Paste, Cut (sent as Omarchy's universal SUPER+C/V/X, terminal-aware)
 - **KEYS** - Escape, Return (sent as synthetic key presses)
 - **SYSTEM** - Screenshot, Keybindings cheat sheet
-- **DICTATION** - Start/stop switch for Voxtype dictation (`voxtype record toggle`), live state pulled from `omarchy-voxtype-status`. Clicking it always refocuses the window that had focus before the panel opened and closes the panel (even while pinned) before starting/stopping the recording — otherwise the transcript has nowhere to go, since opening the panel steals keyboard focus
+- **DICTATION** - Start/stop switch for Voxtype dictation (`voxtype record toggle`), live state pulled from `omarchy-voxtype-status`
 
 ## Windows - this workspace
 

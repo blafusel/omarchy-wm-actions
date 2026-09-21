@@ -2,17 +2,32 @@ import QtQuick
 import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
+import Quickshell.Wayland
 import qs.Ui
 import qs.Commons
 
+// EXPERIMENTAL branch (floating-window): a standalone PanelWindow instead of
+// the usual KeyboardPanel-anchored click-away popup. Two problems this fixes
+// that the pin toggle on the KeyboardPanel version couldn't:
+//   1. WlrKeyboardFocus.None below means opening/clicking this panel never
+//      steals keyboard focus, so dictation no longer needs any capture/
+//      refocus workaround -- the window you were dictating into just keeps
+//      focus the whole time.
+//   2. There's no full-screen click-catcher, so clicking other windows while
+//      this panel is open reaches them normally instead of being swallowed.
+// Tradeoff: no click-away-to-dismiss, no fade animation, and no mutual
+// exclusion with other bar popups (opening this doesn't close another popup
+// and vice versa) -- KeyboardPanel owned all of that internally.
+// Roll back to the previous (KeyboardPanel-based) version with:
+//   git -C ~/.config/omarchy/plugins/blafusel.wm-actions checkout master
 Panel {
   id: root
   moduleName: "io.github.blafusel.wm-actions"
   ipcTarget: "io.github.blafusel.wm-actions"
 
-  // Pin: keeps the panel open through outside clicks, the bar-icon toggle,
-  // Escape, and the post-action auto-close, so it can sit open while you
-  // work. Only the sticky toggle itself can release it.
+  // Pin: keeps the panel open after firing a grid action. Outside clicks and
+  // the bar icon never close it regardless (see header note), so this only
+  // still governs the post-action auto-close.
   property bool sticky: false
 
   // Overrides the base Panel's close() -- same pattern omarchy.network's
@@ -88,50 +103,19 @@ Panel {
     root.dictationState = String(data.alt || data.class || "idle")
   }
 
-  // The window that had keyboard focus right before this panel stole it by
-  // opening (KeyboardPanel primes WlrKeyboardFocus.Exclusive on map). Voxtype
-  // types its transcript into whatever holds keyboard focus at record-stop
-  // time, so without restoring this, dictation started/stopped from the
-  // panel goes nowhere. Captured on every open (button press and IPC/keyboard
-  // summon alike) via captureFocusedWindow() below.
-  property string dictationTargetAddress: ""
-
-  function captureFocusedWindow() {
-    if (!activeWindowProc.running) activeWindowProc.running = true
-  }
-
-  function handleActiveWindow(raw) {
-    var data
-    try { data = JSON.parse(raw) } catch (e) { return }
-    if (data && data.address) root.dictationTargetAddress = data.address
+  // No focus capture/restore needed here (unlike the KeyboardPanel version):
+  // this panel never takes keyboard focus in the first place, so whatever
+  // window you were dictating into stays focused the whole time.
+  function toggleDictation() {
+    Quickshell.execDetached(["voxtype", "record", "toggle"])
   }
 
   Process {
-    id: activeWindowProc
-    command: ["hyprctl", "activewindow", "-j"]
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.handleActiveWindow(text) }
-  }
-
-  // Refocus the captured target window (hl.dsp.focus moves real keyboard
-  // focus even while this panel's layer surface stays mapped -- OnDemand
-  // only holds focus, it doesn't fight an explicit dispatch), then
-  // start/stop the recording once focus has settled. Respects `sticky` like
-  // every other action (root.close(), not a forced controller.hide()): a
-  // pinned panel stays open, the refocus dispatch alone is enough to route
-  // voxtype's typed transcript to the target window instead of the panel.
-  function toggleDictation() {
-    if (root.dictationTargetAddress) {
-      Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.focus({ window = 'address:" + root.dictationTargetAddress + "' })"])
+    command: ["bash", "-c", "omarchy-voxtype-status"]
+    running: true
+    stdout: SplitParser {
+      onRead: function(data) { root.handleDictationStatus(data) }
     }
-    root.close()
-    dictationStartTimer.restart()
-  }
-
-  Timer {
-    id: dictationStartTimer
-    interval: 80
-    repeat: false
-    onTriggered: Quickshell.execDetached(["voxtype", "record", "toggle"])
   }
 
   function runAction(action) {
@@ -224,15 +208,7 @@ Panel {
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.handleClients(text) }
   }
 
-  // Covers every way the panel can open: the bar-icon press below fires
-  // before root.toggle() runs (earliest, most reliable capture), and this
-  // catches IPC/keyboard-summoned opens that skip the button entirely.
-  onOpenedChanged: {
-    if (opened) {
-      refreshWindows()
-      captureFocusedWindow()
-    }
-  }
+  onOpenedChanged: if (opened) refreshWindows()
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -243,39 +219,71 @@ Panel {
     bar: root.bar
     text: "󰍜"
     tooltipText: "WM Actions"
-    onPressed: function(b) {
-      if (!root.opened) root.captureFocusedWindow()
-      root.toggle()
-    }
+    onPressed: function(b) { root.toggle() }
   }
 
-  KeyboardPanel {
-    id: panel
-    anchorItem: button
-    owner: root
-    bar: root.bar
-    open: root.opened
-    focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(300))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight)
+  // Same window the bar-icon button renders in, used only to pick the right
+  // monitor for the floating panel below (multi-monitor: each screen has its
+  // own bar instance).
+  readonly property var anchorWindow: button.QsWindow ? button.QsWindow.window : null
 
-    PanelKeyCatcher {
-      id: keyCatcher
-      anchors.fill: parent
-      onCloseRequested: root.close()
-      onTabRequested: function(direction) { root.switchPanel(direction) }
+  PanelWindow {
+    id: floatWin
+    visible: root.opened
+    screen: root.anchorWindow ? root.anchorWindow.screen : null
+    color: "transparent"
+    exclusionMode: ExclusionMode.Ignore
+
+    WlrLayershell.namespace: "omarchy-wm-actions-float"
+    WlrLayershell.layer: WlrLayer.Overlay
+    // Never take keyboard focus -- every control here is mouse-only (grid
+    // buttons, a switch), so there's nothing that needs it, and leaving it
+    // None is what keeps this panel from stealing focus off whatever window
+    // you were using (see header note).
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+    readonly property int gap: Style.gapsOut
+    readonly property int hostBarSize: root.bar ? root.bar.barSize : 0
+    readonly property string barPos: root.bar ? root.bar.position : "top"
+
+    anchors {
+      top: barPos !== "bottom"
+      bottom: barPos === "bottom"
+      left: barPos === "left"
+      right: barPos !== "left"
+    }
+    margins {
+      top: (barPos === "top" ? hostBarSize : 0) + gap
+      bottom: (barPos === "bottom" ? hostBarSize : 0) + gap
+      left: (barPos === "left" ? hostBarSize : 0) + gap
+      right: (barPos === "right" ? hostBarSize : 0) + gap
+    }
+
+    readonly property real maxCardHeight: Math.max(120, (screen ? screen.height : 900) - margins.top - margins.bottom)
+
+    implicitWidth: card.width
+    implicitHeight: card.height
+
+    BorderSurface {
+      id: card
+      width: Style.space(300)
+      height: Math.min(contentColumn.implicitHeight + contentTopInset + contentBottomInset, floatWin.maxCardHeight)
+      color: Color.popups.background
+      borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
+      padding: Style.spacing.popupPadding
+      radius: Style.cornerRadius
 
       Column {
-        id: column
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
+        id: contentColumn
+        x: card.contentLeftInset
+        y: card.contentTopInset
+        width: card.width - card.contentLeftInset - card.contentRightInset
         spacing: Style.space(14)
 
         Toggle {
-          width: column.width
+          width: contentColumn.width
           label: "Keep panel open"
-          description: "Ignore outside clicks and don't close after an action"
+          description: "Don't close after firing an action"
           checked: root.sticky
           foreground: root.bar.foreground
           fontFamily: root.bar.fontFamily
@@ -291,7 +299,7 @@ Panel {
           delegate: Column {
             id: sectionColumn
             required property var modelData
-            width: column.width
+            width: contentColumn.width
             spacing: Style.space(8)
 
             PanelSectionHeader {
@@ -328,7 +336,7 @@ Panel {
         }
 
         Column {
-          width: parent.width
+          width: contentColumn.width
           spacing: Style.space(8)
 
           PanelSectionHeader {
@@ -363,7 +371,7 @@ Panel {
         }
 
         Column {
-          width: parent.width
+          width: contentColumn.width
           spacing: Style.space(8)
 
           PanelSectionHeader {
