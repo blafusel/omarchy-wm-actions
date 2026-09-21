@@ -21,17 +21,21 @@ Item {
 
   // Press-and-hold repeat, for actions like Backspace where holding down a
   // real key auto-repeats. Off by default (every other button keeps plain
-  // Button click behavior untouched). When on, repeatInterval must stay
-  // comfortably longer than the caller's own dispatch cycle (e.g. sendKey's
-  // ~110ms explicit-refocus + down/up settle chain) -- firing clicked()
-  // faster than that just keeps restarting the caller's own timers before
-  // they ever get to dispatch anything, so backspace would silently never
-  // fire. 150ms default clears that with margin.
+  // Button click behavior untouched). The first press always emits
+  // clicked() -- same as a normal click, full-weight dispatch. Every
+  // auto-repeat tick after that emits the separate repeated() signal
+  // instead, so the caller can use a cheaper/faster path for it: repeated
+  // presses don't need e.g. sendKey's explicit refocus + settle delay,
+  // since focus is already correct by the time you're holding a button
+  // down. That's what lets repeatInterval go fast (75ms) without the
+  // starvation problem a single shared dispatch path would hit -- see
+  // Panel.qml's sendKeyFast().
   property bool repeatOnHold: false
   property int repeatInitialDelay: 450
-  property int repeatInterval: 150
+  property int repeatInterval: 75
 
   signal clicked()
+  signal repeated()
   signal favoriteToggled()
 
   implicitWidth: btn.implicitWidth
@@ -90,7 +94,7 @@ Item {
     id: repeatIntervalTimer
     interval: root.repeatInterval
     repeat: true
-    onTriggered: root.clicked()
+    onTriggered: root.repeated()
   }
 
   Text {

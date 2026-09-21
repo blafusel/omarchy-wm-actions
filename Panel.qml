@@ -81,7 +81,6 @@ Panel {
   readonly property var favorites: root.setting("favorites", [])
   readonly property bool favoritesOnly: root.setting("favoritesOnly", false)
 
-
   function isFavorite(favId) {
     return root.favorites.indexOf(favId) !== -1
   }
@@ -300,6 +299,28 @@ Panel {
   Timer {
     id: keyUpTimer
     interval: 50
+    repeat: false
+    property string pendingKey: ""
+    property string pendingMods: ""
+    onTriggered: Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.send_key_state({ mods = '" + pendingMods + "', key = '" + pendingKey + "', state = 'up'" + root.windowClause() + " })"])
+  }
+
+  // Fast path for FavButton's auto-repeat ticks (e.g. holding Backspace):
+  // skips sendKey's explicit hl.dsp.focus + 60ms settle, since those exist
+  // to recover from a click disrupting focus -- already handled by the
+  // first press of the hold, which does go through sendKey(). Still
+  // window-targeted via windowClause(), just no re-settle each tick. Total
+  // cycle ~25ms, comfortably inside FavButton's 75ms repeat interval.
+  function sendKeyFast(key, mods) {
+    Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.send_key_state({ mods = '" + mods + "', key = '" + key + "', state = 'down'" + root.windowClause() + " })"])
+    keyFastUpTimer.pendingKey = key
+    keyFastUpTimer.pendingMods = mods
+    keyFastUpTimer.restart()
+  }
+
+  Timer {
+    id: keyFastUpTimer
+    interval: 25
     repeat: false
     property string pendingKey: ""
     property string pendingMods: ""
@@ -613,6 +634,7 @@ Panel {
                   repeatOnHold: !!modelData.repeat
                   onFavoriteToggled: root.toggleFavorite(modelData.id)
                   onClicked: root.runAction(modelData)
+                  onRepeated: root.sendKeyFast(modelData.key, modelData.mods || "")
                 }
               }
             }

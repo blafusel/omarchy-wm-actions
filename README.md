@@ -31,7 +31,7 @@ Since the panel stays open across workspace switches, the captured window, the S
 
 KEYS targets the window that had focus right before the panel opened explicitly (via `send_key_state`'s `window` field), rather than relying on ambient seat focus — clicking a button in the panel is itself a pointer event on the panel's own surface, which was enough to disrupt plain ambient-focus delivery.
 
-**Backspace** repeats while held down, like a real key: an initial ~450ms delay, then fires roughly every 150ms until released. That interval is deliberately slower than it needs to look — each press's own dispatch (explicit refocus, then a down/up `send_key_state` pair ~110ms apart) has to fully land before the next repeat fires, or it just keeps resetting itself and nothing gets sent at all.
+**Backspace** repeats while held down, like a real key: an initial ~450ms delay, then fires roughly every 75ms until released. The first press is a full-weight dispatch (explicit refocus, then a settled down/up `send_key_state` pair) same as Escape/Return; every repeat tick after that uses a lighter, faster path with no refocus/settle (focus is already correct once you're holding a button down) — that's what lets the repeat rate go this fast without the repeats just resetting each other's timers into never firing at all.
 
 CLIPBOARD doesn't send SUPER+C/V/X anymore. Hyprland's global "Universal clipboard" binds never fire for synthetic virtual-keyboard input at all — confirmed directly: even `SUPER+S` (toggle scratchpad) silently no-ops when sent this way, the workspace never changes. Global keybinds apparently only respond to real hardware input, likely a deliberate compositor-level boundary. Copy/Cut instead read the Wayland **primary selection** (auto-populated by most apps/terminals whenever text is selected, no keypress involved at all) and write it to the clipboard directly; Cut then removes the selection with a plain Delete key. Paste sends an ordinary Ctrl+V (Shift+Insert in a terminal, where Ctrl+V usually means something else) — a normal app/terminal-level shortcut, not a compositor bind, so it's delivered reliably the same way Escape/Return are.
 
@@ -77,6 +77,7 @@ omarchy plugin disable io.github.blafusel.wm-actions
 
 ## Changelog
 
+- **1.4.4** — Backspace repeats roughly twice as fast (~75ms instead of ~150ms): repeat ticks now use a lighter dispatch path that skips the explicit refocus/settle the first press still does, since focus is already correct once you're holding a button down.
 - **1.4.3** — Backspace now repeats while held down (initial ~450ms delay, then every ~150ms) instead of needing one click per character.
 - **1.4.2** — Added KEYS > Backspace.
 - **1.4.1** — Fixed CLIPBOARD: Copy/Paste/Cut sent SUPER+C/V/X expecting Hyprland's global "Universal clipboard" binds to fire, but those never respond to synthetic input at all (confirmed directly: even `SUPER+S` silently no-ops the same way). Copy/Cut now read the Wayland primary selection instead (no keypress involved); Paste sends a plain Ctrl+V/Shift+Insert.
