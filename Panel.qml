@@ -112,6 +112,8 @@ Panel {
   // as { address, title, class }.
   property var windows: []
   property int currentWorkspaceId: 0
+  property int activeWorkspaceId: 0
+  property var stashedWindows: []
 
   // Voxtype dictation state, streamed continuously (not gated on the panel
   // being open) so the switch already shows the right state the moment the
@@ -140,16 +142,14 @@ Panel {
   // open (button press and IPC/keyboard summon alike).
   property string lastFocusedAddress: ""
 
-  // Workspace name of that same captured window ("2", "special:scratchpad",
-  // ...), used to decide which WINDOW button to show (Send to Scratchpad vs.
-  // Send to Desktop) and, combined with scratchpadOrigins below, to send a
-  // window back to the workspace it actually came from instead of just
-  // "whatever workspace is current" when it's pulled back out.
+  // Workspace name of that same captured window ("2", "special:scratchpad", ...).
   property string lastFocusedWorkspaceName: ""
-  readonly property bool lastFocusedInScratchpad: root.lastFocusedWorkspaceName === "special:scratchpad"
 
   // address -> origin workspace name, recorded right before a window is sent
-  // to the scratchpad so "Send to Desktop" can restore it precisely.
+  // to the scratchpad so Restore can send it back precisely. Session-only
+  // (not persisted): a window stashed in an earlier session, or by some
+  // other means (keybind), has no entry here -- restoreWindow() below falls
+  // back to the current workspace in that case.
   property var scratchpadOrigins: ({})
 
   function captureFocusedWindow() {
@@ -177,7 +177,13 @@ Panel {
     }
   }
 
-  function sendActiveToScratchpad() {
+  // Stashes whatever was focused right before the panel opened. Restoring
+  // is deliberately NOT the same button/click -- by the time you come back
+  // for a window you stashed "for later", focus has long since moved on to
+  // something else, so there's nothing meaningful left to toggle back on
+  // this button. Restore instead happens per-window from the STASHED list
+  // below, which works off the actual scratchpad contents, not ambient focus.
+  function stashActiveWindow() {
     var addr = root.lastFocusedAddress
     if (addr) {
       root.scratchpadOrigins[addr] = root.lastFocusedWorkspaceName
@@ -185,20 +191,11 @@ Panel {
     }
   }
 
-  function sendActiveToDesktop() {
-    var addr = root.lastFocusedAddress
-    if (addr) {
-      var origin = root.scratchpadOrigins[addr]
-      if (origin && origin !== "special:scratchpad") {
-        Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.window.move({ window = 'address:" + addr + "', workspace = '" + origin + "' })"])
-      } else {
-        // No remembered origin (fresh session, or it never went through
-        // "Send to Scratchpad" here) -- fall back to just showing the
-        // scratchpad special workspace, same as the toggle button below.
-        Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.workspace.toggle_special('scratchpad')"])
-      }
-      delete root.scratchpadOrigins[addr]
-    }
+  function restoreWindow(address) {
+    var origin = root.scratchpadOrigins[address]
+    var target = (origin && origin !== "special:scratchpad") ? origin : String(root.activeWorkspaceId)
+    Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.window.move({ window = 'address:" + address + "', workspace = '" + target + "' })"])
+    delete root.scratchpadOrigins[address]
   }
 
   Process {
@@ -279,6 +276,10 @@ Panel {
     var special = focused.specialWorkspace
     var active = focused.activeWorkspace
     root.currentWorkspaceId = (special && special.id) ? special.id : (active ? active.id : 0)
+    // Always the plain (non-special) workspace, even while the scratchpad is
+    // shown -- restoreWindow()'s fallback needs a real destination, never
+    // the special workspace itself.
+    root.activeWorkspaceId = active ? active.id : 0
     if (!clientsProc.running) clientsProc.running = true
   }
 
@@ -298,6 +299,9 @@ Panel {
     if (!Array.isArray(data)) return
     root.windows = data
       .filter(function(c) { return c.workspace && c.workspace.id === root.currentWorkspaceId })
+      .map(function(c) { return { address: c.address, title: root.truncateTitle(c.title || c.class), class: c.class } })
+    root.stashedWindows = data
+      .filter(function(c) { return c.workspace && c.workspace.name === "special:scratchpad" })
       .map(function(c) { return { address: c.address, title: root.truncateTitle(c.title || c.class), class: c.class } })
   }
 
@@ -519,14 +523,14 @@ Panel {
             FavButton {
               Layout.fillWidth: true
               visible: !root.favoritesOnly || root.isFavorite("window.stash")
-              iconText: root.lastFocusedInScratchpad ? "󰄝" : "󰄠"
-              text: root.lastFocusedInScratchpad ? "Restore" : "Stash"
-              tooltipText: root.lastFocusedInScratchpad ? "Send back to its original workspace" : "Send to scratchpad"
+              iconText: "󰄠"
+              text: "Stash"
+              tooltipText: "Send the focused window to the scratchpad -- restore it later from the STASHED list below"
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
               isFavorite: root.isFavorite("window.stash")
               onFavoriteToggled: root.toggleFavorite("window.stash")
-              onClicked: root.lastFocusedInScratchpad ? root.sendActiveToDesktop() : root.sendActiveToScratchpad()
+              onClicked: root.stashActiveWindow()
             }
           }
         }
@@ -647,6 +651,69 @@ Panel {
 
               Button {
                 id: closeBtn
+                iconText: "✕"
+                fontSize: Style.font.bodySmall
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                bordered: true
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY
+                onClicked: root.closeWindow(modelData.address)
+              }
+            }
+          }
+        }
+
+        PanelSeparator {
+          foreground: root.bar.foreground
+        }
+
+        Column {
+          width: contentColumn.width
+          spacing: Style.space(8)
+
+          PanelSectionHeader {
+            text: "STASHED"
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+          }
+
+          Text {
+            visible: root.stashedWindows.length === 0
+            text: "Nothing stashed"
+            color: root.bar.foreground
+            opacity: 0.6
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+
+          // Restores this specific window regardless of what's currently
+          // focused -- unlike WINDOW > Stash above, which only acts on the
+          // window that had focus right before the panel opened.
+          Repeater {
+            model: root.stashedWindows
+            delegate: Row {
+              required property var modelData
+              width: parent.width
+              spacing: Style.space(6)
+
+              Button {
+                width: parent.width - stashedCloseBtn.width - parent.spacing
+                leftAlign: true
+                iconText: "󰄝"
+                text: modelData.title
+                tooltipText: "Restore to its original workspace"
+                fontSize: Style.font.bodySmall
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+                bordered: true
+                horizontalPadding: Style.spacing.controlPaddingX
+                verticalPadding: Style.spacing.controlPaddingY
+                onClicked: root.restoreWindow(modelData.address)
+              }
+
+              Button {
+                id: stashedCloseBtn
                 iconText: "✕"
                 fontSize: Style.font.bodySmall
                 foreground: root.bar.foreground
