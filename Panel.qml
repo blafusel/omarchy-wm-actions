@@ -24,18 +24,10 @@ Panel {
   moduleName: "io.github.blafusel.wm-actions"
   ipcTarget: "io.github.blafusel.wm-actions"
 
-  // Pin: keeps the panel open after firing a grid action. Outside clicks and
-  // the bar icon never close it regardless (see header note), so this only
-  // still governs the post-action auto-close.
-  property bool sticky: false
-
-  // Overrides the base Panel's close() -- same pattern omarchy.network's
-  // Panel.qml uses (root.controller is the public alias for the base's
-  // internal PanelController) -- to gate every close path on `sticky`.
-  function close() {
-    if (root.sticky) return
-    root.controller.hide()
-  }
+  // The panel never auto-closes after firing an action (outside clicks and
+  // the bar icon don't close it either -- see header note), so it only
+  // closes via an explicit bar-icon click or IPC close. Base Panel's own
+  // close()/toggle() handle that; nothing to override here.
 
   // ---- action grid catalog, grouped by function ----
   // type "exec"  -> cmd is argv passed straight to Quickshell.execDetached
@@ -144,7 +136,6 @@ Panel {
     if (root.lastFocusedAddress) {
       Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.window.close({ window = 'address:" + root.lastFocusedAddress + "' })"])
     }
-    root.close()
   }
 
   function sendActiveToScratchpad() {
@@ -153,7 +144,6 @@ Panel {
       root.scratchpadOrigins[addr] = root.lastFocusedWorkspaceName
       Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.window.move({ window = 'address:" + addr + "', workspace = 'special:scratchpad' })"])
     }
-    root.close()
   }
 
   function sendActiveToDesktop() {
@@ -170,7 +160,6 @@ Panel {
       }
       delete root.scratchpadOrigins[addr]
     }
-    root.close()
   }
 
   Process {
@@ -184,7 +173,6 @@ Panel {
   function runAction(action) {
     if (action.type === "key") sendKey(action.key, action.mods || "")
     else Quickshell.execDetached(action.cmd)
-    root.close()
   }
 
   // send_key_state (down, then up ~50ms later) instead of send_shortcut --
@@ -276,7 +264,6 @@ Panel {
 
   function focusWindow(address) {
     Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.focus({ window = 'address:" + address + "' })"])
-    root.close()
   }
 
   function closeWindow(address) {
@@ -385,20 +372,6 @@ Panel {
         y: card.contentTopInset
         width: card.width - card.contentLeftInset - card.contentRightInset
         spacing: Style.space(14)
-
-        Toggle {
-          width: contentColumn.width
-          label: "Keep panel open"
-          description: "Don't close after firing an action"
-          checked: root.sticky
-          foreground: root.bar.foreground
-          fontFamily: root.bar.fontFamily
-          onClicked: root.sticky = !root.sticky
-        }
-
-        PanelSeparator {
-          foreground: root.bar.foreground
-        }
 
         Repeater {
           model: root.actionSections
