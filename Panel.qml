@@ -59,7 +59,11 @@ Panel {
       items: [
         { id: "launch.launcher", icon: "󱂬", label: "Launcher", type: "exec", cmd: ["omarchy-menu", "toggle"] },
         { id: "launch.browser",  icon: "󰖟", label: "Browser",  type: "exec", cmd: ["omarchy-launch-browser"] },
-        { id: "launch.terminal", icon: "", label: "Terminal", type: "exec", cmd: ["omarchy-launch-terminal"] }
+        { id: "launch.terminal", icon: "", label: "Terminal", type: "exec", cmd: ["omarchy-launch-terminal"] },
+        // gtk-launch (not a hardcoded binary path) so this works regardless
+        // of install method (snap/flatpak/native) -- the desktop file id is
+        // the .desktop filename without its extension.
+        { id: "launch.plex",     icon: "󰚺", label: "Plex",     type: "exec", cmd: ["gtk-launch", "plex-desktop_plex-desktop"] }
       ]
     },
     {

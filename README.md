@@ -19,7 +19,7 @@ Built for dual-monitor setups where one screen is driven from a different PC and
 - **WINDOW** - Scratchpad toggle, Float toggle, Fullscreen toggle, Close, Stash
 - **CLIPBOARD** - Copy, Paste, Cut
 - **KEYS** - Escape, Return, Backspace (hold to repeat) (sent as synthetic key presses)
-- **LAUNCH** - Launcher, Browser, Terminal
+- **LAUNCH** - Launcher, Browser, Terminal, Plex
 - **SYSTEM** - Screenshot, Keybindings cheat sheet
 - **DICTATION** - Start/stop switch for Voxtype dictation (`voxtype record toggle`), live state pulled from `omarchy-voxtype-status`
 
@@ -77,6 +77,7 @@ omarchy plugin disable io.github.blafusel.wm-actions
 
 ## Changelog
 
+- **1.4.5** — Added LAUNCH > Plex, launched via `gtk-launch plex-desktop_plex-desktop` (desktop-file id, not a hardcoded binary path, so it works regardless of install method).
 - **1.4.4** — Backspace repeats roughly twice as fast (~75ms instead of ~150ms): repeat ticks now use a lighter dispatch path that skips the explicit refocus/settle the first press still does, since focus is already correct once you're holding a button down.
 - **1.4.3** — Backspace now repeats while held down (initial ~450ms delay, then every ~150ms) instead of needing one click per character.
 - **1.4.2** — Added KEYS > Backspace.
