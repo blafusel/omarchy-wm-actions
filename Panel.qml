@@ -25,6 +25,13 @@ Panel {
   moduleName: "io.github.blafusel.wm-actions"
   ipcTarget: "io.github.blafusel.wm-actions"
 
+  IpcHandler {
+    target: "io.github.blafusel.wm-actions.debug"
+    function callSendKey(key: string, mods: string): void {
+      root.sendKey(key, mods)
+    }
+  }
+
   // The panel never auto-closes after firing an action (outside clicks and
   // the bar icon don't close it either -- see header note), so it only
   // closes via an explicit bar-icon click or IPC close. Base Panel's own
@@ -50,8 +57,10 @@ Panel {
       title: "KEYS",
       items: [
         { id: "keys.escape",    icon: "⎋", label: "Escape",    type: "key", key: "Escape" },
+        { id: "keys.up",        icon: "󰁝", label: "Up",        type: "key", key: "Up", repeat: true },
         { id: "keys.return",    icon: "⏎", label: "Return",    type: "key", key: "Return" },
-        { id: "keys.backspace", icon: "󰁮", label: "Backspace", type: "key", key: "BackSpace", repeat: true }
+        { id: "keys.backspace", icon: "󰁮", label: "Backspace", type: "key", key: "BackSpace", repeat: true },
+        { id: "keys.ctrl_c",    icon: "󰓛", label: "Ctrl+C",    type: "key", key: "C", mods: "CTRL" }
       ]
     },
     {
@@ -59,7 +68,7 @@ Panel {
       items: [
         { id: "launch.launcher", icon: "󱂬", label: "Launcher", type: "exec", cmd: ["omarchy-menu", "toggle"] },
         { id: "launch.browser",  icon: "󰖟", label: "Browser",  type: "exec", cmd: ["omarchy-launch-browser"] },
-        { id: "launch.terminal", icon: "", label: "Terminal", type: "exec", cmd: ["omarchy-launch-terminal"] },
+        { id: "launch.terminal", icon: "󰆍", label: "Terminal", type: "exec", cmd: ["omarchy-launch-terminal"] },
         // gtk-launch (not a hardcoded binary path) so this works regardless
         // of install method (snap/flatpak/native) -- the desktop file id is
         // the .desktop filename without its extension.
@@ -112,6 +121,53 @@ Panel {
   readonly property var windowSectionFavIds: ["window.scratchpad", "window.float", "window.fullscreen", "window.close", "window.stash"]
   readonly property bool windowSectionHasVisibleItems: !root.favoritesOnly || root.windowSectionFavIds.some(function(favId) { return root.isFavorite(favId) })
 
+  // ---- settings menu ----
+  // settingsOpen is local UI state (not persisted -- it's just whether the
+  // menu is expanded right now). showWindowsOverview/showStashOverview and
+  // disabledActionIds persist the same way favorites do.
+  property bool settingsOpen: false
+
+  readonly property bool showWindowsOverview: root.setting("showWindowsOverview", true)
+  readonly property bool showStashOverview: root.setting("showStashOverview", true)
+
+  function toggleShowWindowsOverview() {
+    root.persistSettings({ showWindowsOverview: !root.showWindowsOverview })
+  }
+
+  function toggleShowStashOverview() {
+    root.persistSettings({ showStashOverview: !root.showStashOverview })
+  }
+
+  // Per-button disable, covering every actionSections item across all
+  // categories (CLIPBOARD/KEYS/LAUNCH/SYSTEM) -- hides a button from the
+  // grid without touching actionSections itself.
+  readonly property var disabledActionIds: root.setting("disabledActionIds", [])
+
+  function isActionDisabled(actionId) {
+    return root.disabledActionIds.indexOf(actionId) !== -1
+  }
+
+  function toggleActionDisabled(actionId) {
+    var next = root.disabledActionIds.slice()
+    var idx = next.indexOf(actionId)
+    if (idx !== -1) next.splice(idx, 1)
+    else next.push(actionId)
+    root.persistSettings({ disabledActionIds: next })
+  }
+
+  // Adding a new LAUNCH app (picking its .desktop id, an icon, and where it
+  // goes) is exactly the kind of change this plugin's own development has
+  // been done as -- see e.g. the Plex button -- so hand it to a fresh Claude
+  // Code session in this plugin's directory instead of building a mouse-only
+  // form for something that's really a small code change. Runs in a real
+  // terminal since Claude Code needs a keyboard/TTY, unlike the rest of this
+  // mouse-only panel.
+  function launchAddAppAssistant() {
+    var prompt = "Add a new app button to the LAUNCH section of the WM Actions Omarchy plugin in this directory (Panel.qml's actionSections). Ask me which app I want added. Then: find its .desktop file id (use gtk-launch with that id, not a hardcoded binary path -- see the Plex button for the pattern), pick a fitting Nerd Font glyph the same way the existing icons were chosen, insert it into the LAUNCH items in a sensible order, bump manifest.json's version, add a README.md changelog entry, restart the omarchy shell and confirm no QML errors, then follow this repo's existing git commit/tag/push conventions (check recent git log and CLAUDE.md before committing)."
+    Quickshell.execDetached(["omarchy-launch-terminal", "bash", "-c",
+      "cd ~/.config/omarchy/plugins/blafusel.wm-actions && exec claude \"$1\"", "_", prompt])
+  }
+
   // Windows on the currently-visible workspace of the focused monitor, each
   // as { address, title, class }.
   property var windows: []
@@ -133,6 +189,37 @@ Panel {
 
   function toggleDictation() {
     Quickshell.execDetached(["voxtype", "record", "toggle"])
+  }
+
+  // Distinct from the toggle button's "stop" action: stop+toggle stops
+  // recording AND transcribes/outputs it, while cancel discards the
+  // recording (or in-flight transcription) with no output at all -- for
+  // when you started dictating and changed your mind mid-sentence.
+  function cancelDictation() {
+    Quickshell.execDetached(["voxtype", "record", "cancel"])
+  }
+
+  // Compact mode: shows only a tiny top-right floating widget with the
+  // dictation switch instead of the full action grid, for when the grid
+  // isn't needed and screen space matters. Persisted the same way as
+  // favoritesOnly, so the bar icon reopens in whichever mode (full or
+  // audio-only) was last active instead of always defaulting back to full.
+  readonly property bool audioOnlyMode: root.setting("audioOnlyMode", false)
+
+  function enterAudioOnlyMode() {
+    root.persistSettings({ audioOnlyMode: true })
+  }
+
+  // The compact widget's close button: both closes the panel (setting
+  // audioOnlyMode alone would flip visibility straight to the full grid
+  // instead of dismissing anything, since floatWin/audioWin are gated on
+  // `opened`, not just the mode) and resets the persisted mode back to
+  // full, so a plain bar-icon reopen after this lands on the full grid --
+  // distinct from just bar-icon-closing an open audio-only panel, which
+  // keeps remembering audio-only for next time.
+  function exitAudioOnlyMode() {
+    root.persistSettings({ audioOnlyMode: false })
+    root.close()
   }
 
   // The window that had keyboard focus right before this panel opened.
@@ -441,6 +528,18 @@ Panel {
     text: "󰍜"
     tooltipText: "WM Actions"
     onPressed: function(b) {
+      if (b === Qt.MiddleButton) {
+        Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.workspace.toggle_special('scratchpad')"])
+        return
+      }
+      if (b === Qt.RightButton) {
+        root.enterAudioOnlyMode()
+        if (!root.opened) root.open()
+        return
+      }
+      // Plain open/close toggle -- which view appears (full grid or the
+      // compact audio-only widget) follows the persisted audioOnlyMode
+      // property below, same as favoritesOnly already did.
       if (!root.opened) root.captureFocusedWindow()
       root.toggle()
     }
@@ -453,7 +552,7 @@ Panel {
 
   PanelWindow {
     id: floatWin
-    visible: root.opened
+    visible: root.opened && !root.audioOnlyMode
     screen: root.anchorWindow ? root.anchorWindow.screen : null
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
@@ -503,6 +602,117 @@ Panel {
         y: card.contentTopInset
         width: card.width - card.contentLeftInset - card.contentRightInset
         spacing: Style.space(14)
+
+        Button {
+          width: contentColumn.width
+          leftAlign: true
+          iconText: "󰒓"
+          text: "Settings"
+          tooltipText: root.settingsOpen ? "Collapse settings" : "Windows/stash overview, per-app toggles, add a new app"
+          fontSize: Style.font.bodySmall
+          iconSize: Style.font.title
+          foreground: root.bar.foreground
+          fontFamily: root.bar.fontFamily
+          bordered: true
+          active: root.settingsOpen
+          horizontalPadding: Style.spacing.controlPaddingX
+          verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+          onClicked: root.settingsOpen = !root.settingsOpen
+        }
+
+        Column {
+          width: contentColumn.width
+          spacing: Style.space(8)
+          visible: root.settingsOpen
+
+          Toggle {
+            width: parent.width
+            label: "Windows overview"
+            description: "Show the WINDOWS -- THIS WORKSPACE list below"
+            checked: root.showWindowsOverview
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            onClicked: root.toggleShowWindowsOverview()
+          }
+
+          Toggle {
+            width: parent.width
+            label: "Stash overview"
+            description: "Show the STASHED list below"
+            checked: root.showStashOverview
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            onClicked: root.toggleShowStashOverview()
+          }
+
+          Repeater {
+            model: root.actionSections
+            delegate: Column {
+              id: settingsSectionColumn
+              required property var modelData
+              width: parent.width
+              spacing: Style.space(6)
+
+              PanelSectionHeader {
+                text: settingsSectionColumn.modelData.title
+                foreground: root.bar.foreground
+                fontFamily: root.bar.fontFamily
+              }
+
+              Repeater {
+                model: settingsSectionColumn.modelData.items
+                delegate: Row {
+                  required property var modelData
+                  width: parent.width
+                  spacing: Style.space(6)
+
+                  Text {
+                    width: parent.width - appToggleBtn.width - parent.spacing
+                    height: appToggleBtn.height
+                    text: modelData.icon + "  " + modelData.label
+                    color: root.bar.foreground
+                    opacity: root.isActionDisabled(modelData.id) ? 0.4 : 1.0
+                    verticalAlignment: Text.AlignVCenter
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+
+                  Button {
+                    id: appToggleBtn
+                    text: root.isActionDisabled(modelData.id) ? "Enable" : "Disable"
+                    fontSize: Style.font.bodySmall
+                    foreground: root.bar.foreground
+                    fontFamily: root.bar.fontFamily
+                    bordered: true
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.spacing.controlPaddingY
+                    onClicked: root.toggleActionDisabled(modelData.id)
+                  }
+                }
+              }
+            }
+          }
+
+          Button {
+            width: parent.width
+            leftAlign: true
+            iconText: "󰐙"
+            text: "Add new app…"
+            tooltipText: "Opens Claude Code in a terminal to add a LAUNCH button -- name, icon, and placement"
+            fontSize: Style.font.bodySmall
+            iconSize: Style.font.title
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            bordered: true
+            horizontalPadding: Style.spacing.controlPaddingX
+            verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+            onClicked: root.launchAddAppAssistant()
+          }
+        }
+
+        PanelSeparator {
+          foreground: root.bar.foreground
+        }
 
         Toggle {
           width: contentColumn.width
@@ -629,7 +839,7 @@ Panel {
                 delegate: FavButton {
                   required property var modelData
                   Layout.fillWidth: true
-                  visible: !root.favoritesOnly || root.isFavorite(modelData.id)
+                  visible: (!root.favoritesOnly || root.isFavorite(modelData.id)) && !root.isActionDisabled(modelData.id)
                   iconText: modelData.icon
                   text: modelData.label
                   foreground: root.bar.foreground
@@ -658,31 +868,70 @@ Panel {
           // Standalone (not in actionSections): it's a stateful switch, not
           // a fire-and-forget action, so it needs its own icon/label/active
           // binding and must not close the panel on click.
-          Button {
+          Row {
             width: parent.width
-            leftAlign: true
-            iconText: root.dictationRecording ? "󰓛" : "󰍬"
-            iconSpinning: root.dictationTranscribing
-            text: root.dictationRecording ? "Stop dictation" : (root.dictationTranscribing ? "Transcribing…" : "Start dictation")
-            fontSize: Style.font.bodySmall
-            iconSize: Style.font.title
-            foreground: root.bar.foreground
-            fontFamily: root.bar.fontFamily
-            bordered: true
-            active: root.dictationRecording
-            horizontalPadding: Style.spacing.controlPaddingX
-            verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
-            onClicked: root.toggleDictation()
+            spacing: Style.space(6)
+
+            Button {
+              width: parent.width - audioOnlyBtn.width - (cancelBtn.visible ? cancelBtn.width + parent.spacing : 0) - parent.spacing
+              leftAlign: true
+              iconText: root.dictationRecording ? "󰓛" : "󰍬"
+              iconSpinning: root.dictationTranscribing
+              text: root.dictationRecording ? "Stop dictation" : (root.dictationTranscribing ? "Transcribing…" : "Start dictation")
+              fontSize: Style.font.bodySmall
+              iconSize: Style.font.title
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              bordered: true
+              active: root.dictationRecording
+              horizontalPadding: Style.spacing.controlPaddingX
+              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+              onClicked: root.toggleDictation()
+            }
+
+            // Only shown mid-recording/transcription -- nothing to cancel
+            // otherwise. Discards instead of stopping-and-transcribing, for
+            // when you change your mind partway through dictating.
+            Button {
+              id: cancelBtn
+              visible: root.dictationRecording || root.dictationTranscribing
+              iconText: "󰍭"
+              tooltipText: "Cancel dictation -- discard, no transcription"
+              fontSize: Style.font.bodySmall
+              iconSize: Style.font.title
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              bordered: true
+              horizontalPadding: Style.spacing.controlPaddingX
+              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+              onClicked: root.cancelDictation()
+            }
+
+            Button {
+              id: audioOnlyBtn
+              iconText: "󰋋"
+              tooltipText: "Audio only -- shrink to just the dictation switch, top-right corner"
+              fontSize: Style.font.bodySmall
+              iconSize: Style.font.title
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              bordered: true
+              horizontalPadding: Style.spacing.controlPaddingX
+              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+              onClicked: root.enterAudioOnlyMode()
+            }
           }
         }
 
         PanelSeparator {
           foreground: root.bar.foreground
+          visible: root.showWindowsOverview || root.showStashOverview
         }
 
         Column {
           width: contentColumn.width
           spacing: Style.space(8)
+          visible: root.showWindowsOverview
 
           PanelSectionHeader {
             text: "WINDOWS — THIS WORKSPACE"
@@ -736,11 +985,13 @@ Panel {
 
         PanelSeparator {
           foreground: root.bar.foreground
+          visible: root.showWindowsOverview && root.showStashOverview
         }
 
         Column {
           width: contentColumn.width
           spacing: Style.space(8)
+          visible: root.showStashOverview
 
           PanelSectionHeader {
             text: "STASHED"
@@ -795,6 +1046,92 @@ Panel {
               }
             }
           }
+        }
+      }
+    }
+  }
+
+  // Compact widget for audioOnlyMode: just the dictation switch, always
+  // top-right regardless of bar position -- unlike floatWin above, this one
+  // isn't meant to sit next to the bar, just stay out of the way.
+  PanelWindow {
+    id: audioWin
+    visible: root.opened && root.audioOnlyMode
+    screen: root.anchorWindow ? root.anchorWindow.screen : null
+    color: "transparent"
+    exclusionMode: ExclusionMode.Ignore
+
+    WlrLayershell.namespace: "omarchy-wm-actions-audio-only"
+    WlrLayershell.layer: WlrLayer.Overlay
+    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
+
+    anchors {
+      top: true
+      right: true
+    }
+    margins {
+      top: Style.gapsOut
+      right: Style.gapsOut
+    }
+
+    implicitWidth: audioCard.width
+    implicitHeight: audioCard.height
+
+    BorderSurface {
+      id: audioCard
+      width: audioRow.implicitWidth + contentLeftInset + contentRightInset
+      height: audioRow.implicitHeight + contentTopInset + contentBottomInset
+      color: Color.popups.background
+      borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
+      padding: Style.spacing.popupPadding
+      radius: Style.cornerRadius
+
+      Row {
+        id: audioRow
+        x: audioCard.contentLeftInset
+        y: audioCard.contentTopInset
+        spacing: Style.space(6)
+
+        Button {
+          id: audioBtn
+          iconText: root.dictationRecording ? "󰓛" : "󰍬"
+          iconSpinning: root.dictationTranscribing
+          // No tooltipText: this sits in its own tiny top-right window, so
+          // the hover popup has nowhere to go but overlap the buttons.
+          fontSize: Style.font.bodySmall
+          iconSize: Style.font.title
+          foreground: root.bar.foreground
+          fontFamily: root.bar.fontFamily
+          bordered: true
+          active: root.dictationRecording
+          horizontalPadding: Style.spacing.controlPaddingX
+          verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+          onClicked: root.toggleDictation()
+        }
+
+        // Same discard-not-transcribe cancel as the full panel's DICTATION
+        // row -- only shown mid-recording/transcription.
+        Button {
+          visible: root.dictationRecording || root.dictationTranscribing
+          iconText: "󰍭"
+          fontSize: Style.font.bodySmall
+          foreground: root.bar.foreground
+          fontFamily: root.bar.fontFamily
+          bordered: true
+          horizontalPadding: Style.spacing.controlPaddingX
+          verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+          onClicked: root.cancelDictation()
+        }
+
+        Button {
+          iconText: "✕"
+          fontSize: Style.font.bodySmall
+          foreground: root.bar.foreground
+          fontFamily: root.bar.fontFamily
+          bordered: true
+          horizontalPadding: Style.spacing.controlPaddingX
+          verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+          onClicked: root.exitAudioOnlyMode()
         }
       }
     }

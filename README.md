@@ -2,7 +2,7 @@
 
 A compact Omarchy bar widget: a mouse-only floating panel of common Hyprland actions, clipboard, dictation, plus a switcher for windows on the current workspace.
 
-Click the bar icon to open the panel. It's a standalone floating window (`PanelWindow`, `WlrKeyboardFocus.None`), not the usual click-away-to-dismiss bar popup:
+Click the bar icon to open the panel. Middle-click it to toggle the scratchpad directly, no panel needed. Right-click it to jump straight into **Audio only** mode (see below). It's a standalone floating window (`PanelWindow`, `WlrKeyboardFocus.None`), not the usual click-away-to-dismiss bar popup:
 
 - **It never steals keyboard focus.** Opening it or clicking its buttons doesn't touch whatever window you were using — verified live (a synthetic keypress reaches a focused terminal while the panel is open). This is what makes the DICTATION switch actually work: the window you're dictating into keeps focus the whole time.
 - **It doesn't swallow clicks.** There's no full-screen catcher, so clicking another window while this panel is open reaches that window normally, and the panel never auto-closes after firing an action — it only closes via the bar icon or IPC.
@@ -18,10 +18,10 @@ Built for dual-monitor setups where one screen is driven from a different PC and
 
 - **WINDOW** - Scratchpad toggle, Float toggle, Fullscreen toggle, Close, Stash
 - **CLIPBOARD** - Copy, Paste, Cut
-- **KEYS** - Escape, Return, Backspace (hold to repeat) (sent as synthetic key presses)
+- **KEYS** - Escape, Up (hold to repeat), Return, Backspace (hold to repeat), Ctrl+C (sent as synthetic key presses)
 - **LAUNCH** - Launcher, Browser, Terminal, Plex
 - **SYSTEM** - Screenshot, Keybindings cheat sheet
-- **DICTATION** - Start/stop switch for Voxtype dictation (`voxtype record toggle`), live state pulled from `omarchy-voxtype-status`
+- **DICTATION** - Start/stop switch for Voxtype dictation (`voxtype record toggle`), live state pulled from `omarchy-voxtype-status`; a Cancel button (mic-off icon) appears next to it while recording/transcribing to discard instead of transcribing (`voxtype record cancel`); a headphones icon next to that switches to **Audio only** mode
 
 WINDOW's last two buttons act on whatever window had focus right before the panel opened: **Close** closes it, and **Stash** sends it to the scratchpad, remembering which workspace it came from. This is a per-window move, different from the **Scratchpad** button above it, which just toggles the whole special scratchpad workspace's visibility without moving anything.
 
@@ -38,6 +38,22 @@ CLIPBOARD doesn't send SUPER+C/V/X anymore. Hyprland's global "Universal clipboa
 ## Favorites
 
 Every button in WINDOW/CLIPBOARD/KEYS/LAUNCH/SYSTEM has a small star in its corner — click it to favorite that button, independently of the button's own action. A "Favorites only" switch at the top of the panel hides everything except starred buttons (and hides a section entirely once nothing in it is starred). DICTATION and the window switcher below are always shown, filter or not. Favorites persist in `~/.config/omarchy/shell.json` (this widget's own bar-layout entry), so they survive shell restarts.
+
+## Audio only
+
+Shrinks the panel down to a tiny top-right widget with just the dictation switch (and Cancel, while recording) — for when you only need to start/stop dictation and the full grid is in the way. Enter it from the headphones icon next to DICTATION, or by right-clicking the bar icon. Exit with the ✕ on the widget, which also resets the mode back to full for next time; closing it via the bar icon or IPC instead (without hitting ✕) leaves Audio only as the remembered mode, so the next open lands back in it.
+
+Persisted the same way as Favorites only, in this widget's shell.json entry — the bar icon's single click just opens/closes whatever mode was last active.
+
+## Settings
+
+A "Settings" entry at the top of the panel expands into:
+
+- **Windows overview** / **Stash overview** toggles — hide the WINDOWS/STASHED lists further down.
+- Per-button **Enable/Disable**, grouped by category (CLIPBOARD/KEYS/LAUNCH/SYSTEM) — hides a button from the grid without touching the plugin's code.
+- **Add new app…** — opens a terminal running `claude` (Claude Code) in this plugin's directory with a prompt to ask which app, find its `.desktop` id, pick an icon, and wire it into LAUNCH following this repo's own conventions. Needs a keyboard/TTY, unlike the rest of this mouse-only panel — meant for the machine you develop on, not the KVM target.
+
+All of the above persist in shell.json like Favorites.
 
 ## Windows - this workspace
 
@@ -77,6 +93,7 @@ omarchy plugin disable io.github.blafusel.wm-actions
 
 ## Changelog
 
+- **1.4.6** — Added KEYS > Up (hold to repeat) and Ctrl+C. Added a dictation Cancel button (discards instead of transcribing) and an Audio only mode (compact top-right dictation-only widget, persisted, entered via headphones icon or right-clicking the bar icon). Middle-click the bar icon to toggle the scratchpad directly. Added a Settings menu: Windows/Stash overview toggles, per-button enable/disable by category, and an "Add new app…" action that opens Claude Code to implement a new LAUNCH button. Fixed the Terminal button's missing icon.
 - **1.4.5** — Added LAUNCH > Plex, launched via `gtk-launch plex-desktop_plex-desktop` (desktop-file id, not a hardcoded binary path, so it works regardless of install method).
 - **1.4.4** — Backspace repeats roughly twice as fast (~75ms instead of ~150ms): repeat ticks now use a lighter dispatch path that skips the explicit refocus/settle the first press still does, since focus is already correct once you're holding a button down.
 - **1.4.3** — Backspace now repeats while held down (initial ~450ms delay, then every ~150ms) instead of needing one click per character.
