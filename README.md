@@ -16,14 +16,14 @@ Built for dual-monitor setups where one screen is driven from a different PC and
 
 ## Actions
 
-- **WINDOW** - Scratchpad toggle, Float toggle, Fullscreen toggle, Close, Stash
+- **WINDOW** - Scratchpad toggle, Float toggle, Fullscreen toggle, Close, Move to Scratchpad
 - **CLIPBOARD** - Copy, Paste, Cut
 - **KEYS** - Escape, Up (hold to repeat), Return, Backspace (hold to repeat), Ctrl+C (sent as synthetic key presses)
-- **LAUNCH** - Launcher, Browser, Terminal, Plex
+- **LAUNCH** - Launcher, Browser, Terminal, Plex, Herdr (opens in a terminal -- no `.desktop` file, it's a CLI tool)
 - **SYSTEM** - Screenshot, Keybindings cheat sheet
 - **DICTATION** - Start/stop switch for Voxtype dictation (`voxtype record toggle`), live state pulled from `omarchy-voxtype-status`; a Cancel button (mic-off icon) appears next to it while recording/transcribing to discard instead of transcribing (`voxtype record cancel`); a headphones icon next to that switches to **Audio only** mode
 
-WINDOW's last two buttons act on whatever window had focus right before the panel opened: **Close** closes it, and **Stash** sends it to the scratchpad, remembering which workspace it came from. This is a per-window move, different from the **Scratchpad** button above it, which just toggles the whole special scratchpad workspace's visibility without moving anything.
+WINDOW's last two buttons act on whatever window had focus right before the panel opened: **Close** closes it, and **Move to Scratchpad** sends it to the scratchpad, remembering which workspace it came from. This is a per-window move, different from the **Scratchpad** button above it, which just toggles the whole special scratchpad workspace's visibility without moving anything.
 
 Bringing a window back out is a separate step, on purpose: by the time you come back for something you stashed "for later," focus has moved on, so there's nothing meaningful left for a single Stash/Restore toggle to act on. Instead, every window actually sitting in the scratchpad shows up in its own **STASHED** list further down — click one to restore it (to its remembered origin workspace, or the current workspace if it got into the scratchpad some other way), or ✕ to close it outright.
 
@@ -50,10 +50,14 @@ Persisted the same way as Favorites only, in this widget's shell.json entry — 
 A "Settings" entry at the top of the panel expands into:
 
 - **Windows overview** / **Stash overview** toggles — hide the WINDOWS/STASHED lists further down.
+- **Single column** — stacks the action grid one button per row instead of three. The card narrows to fit the widest visible button (floored so the Favorites/Settings toggle rows never truncate), and the whole panel becomes scrollable once stacked content runs past the screen's usable height.
+- **Pin panel** — reserves real screen space along the panel's edge (tiled windows get pushed clear of it instead of tiling underneath) and reopens the panel automatically whenever the omarchy shell restarts. Manually closing it afterward still works as normal.
 - Per-button **Enable/Disable**, grouped by category (CLIPBOARD/KEYS/LAUNCH/SYSTEM) — hides a button from the grid without touching the plugin's code.
 - **Add new app…** — opens a terminal running `claude` (Claude Code) in this plugin's directory with a prompt to ask which app, find its `.desktop` id, pick an icon, and wire it into LAUNCH following this repo's own conventions. Needs a keyboard/TTY, unlike the rest of this mouse-only panel — meant for the machine you develop on, not the KVM target.
 
 All of the above persist in shell.json like Favorites.
+
+Every button's tooltip wraps at a fixed max width instead of the kit's default single unbounded line, so long ones (e.g. Move to Scratchpad's) don't overflow past the card's edge -- most noticeable once the card narrows down in Single column mode.
 
 ## Windows - this workspace
 
@@ -93,6 +97,7 @@ omarchy plugin disable io.github.blafusel.wm-actions
 
 ## Changelog
 
+- **1.5.0** — Added LAUNCH > Herdr. Added Settings > Single column (scrollable, card narrows to fit the widest button) and Pin panel (reserves screen space along its edge, reopens automatically on shell restart). Tooltips now word-wrap at a fixed max width instead of overflowing past the card's edge. Renamed WINDOW > Stash to Move to Scratchpad to match what it actually does.
 - **1.4.6** — Added KEYS > Up (hold to repeat) and Ctrl+C. Added a dictation Cancel button (discards instead of transcribing) and an Audio only mode (compact top-right dictation-only widget, persisted, entered via headphones icon or right-clicking the bar icon). Middle-click the bar icon to toggle the scratchpad directly. Added a Settings menu: Windows/Stash overview toggles, per-button enable/disable by category, and an "Add new app…" action that opens Claude Code to implement a new LAUNCH button. Fixed the Terminal button's missing icon.
 - **1.4.5** — Added LAUNCH > Plex, launched via `gtk-launch plex-desktop_plex-desktop` (desktop-file id, not a hardcoded binary path, so it works regardless of install method).
 - **1.4.4** — Backspace repeats roughly twice as fast (~75ms instead of ~150ms): repeat ticks now use a lighter dispatch path that skips the explicit refocus/settle the first press still does, since focus is already correct once you're holding a button down.

@@ -46,7 +46,10 @@ Item {
     anchors.fill: parent
     iconText: root.iconText
     text: root.text
-    tooltipText: root.tooltipText
+    // Not passed through to Button's own tooltipText: its built-in ToolTip
+    // never wraps (single unbounded line), which is exactly what overflowed
+    // past the card's edge in single-column mode. ownTooltip below wraps to
+    // a fixed max width instead.
     active: root.active || repeatArea.pressed
     iconSpinning: root.iconSpinning
     leftAlign: root.leftAlign
@@ -58,6 +61,12 @@ Item {
     horizontalPadding: Style.spacing.controlPaddingX
     verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
     onClicked: if (!root.repeatOnHold) root.clicked()
+  }
+
+  WrappedTooltip {
+    hoverSource: btn.hot
+    text: root.tooltipText
+    fontFamily: root.fontFamily
   }
 
   // Sits above btn's own MouseArea (so it owns every click) but below the

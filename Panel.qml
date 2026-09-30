@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -72,7 +73,10 @@ Panel {
         // gtk-launch (not a hardcoded binary path) so this works regardless
         // of install method (snap/flatpak/native) -- the desktop file id is
         // the .desktop filename without its extension.
-        { id: "launch.plex",     icon: "󰚺", label: "Plex",     type: "exec", cmd: ["gtk-launch", "plex-desktop_plex-desktop"] }
+        { id: "launch.plex",     icon: "󰚺", label: "Plex",     type: "exec", cmd: ["gtk-launch", "plex-desktop_plex-desktop"] },
+        // No .desktop file -- CLI tool, so it needs a terminal to run in
+        // (its own TUI, same as the Add-new-app terminal below).
+        { id: "launch.herdr",    icon: "󰳆", label: "Herdr",    type: "exec", cmd: ["omarchy-launch-terminal", "herdr"] }
       ]
     },
     {
@@ -136,6 +140,83 @@ Panel {
 
   function toggleShowStashOverview() {
     root.persistSettings({ showStashOverview: !root.showStashOverview })
+  }
+
+  readonly property bool singleColumn: root.setting("singleColumn", false)
+
+  function toggleSingleColumn() {
+    root.persistSettings({ singleColumn: !root.singleColumn })
+  }
+
+  // Pin: open automatically on shell (re)start instead of waiting for a
+  // bar-icon click, like a pinned/always-present widget. Closing it
+  // manually afterward still works as normal -- this only affects what
+  // happens at startup.
+  readonly property bool pinned: root.setting("pinned", false)
+
+  function togglePinned() {
+    root.persistSettings({ pinned: !root.pinned })
+  }
+
+  // `settings` starts as {} and is filled in by the host shell after this
+  // plugin is instantiated, asynchronously -- Component.onCompleted read it
+  // too early (pinned always looked false right at startup). Apply once,
+  // the first time real settings land, instead: a guarded onSettingsChanged
+  // so later toggles (e.g. flipping Favorites only while the panel is
+  // closed) don't re-open it out from under a manual close.
+  //
+  // Even with settings populated, calling open() right away still silently
+  // gets reverted a moment later -- something elsewhere in shell startup
+  // (outside this plugin) resets panel state during its own init window.
+  // Confirmed live: the exact same open() call sticks fine once issued well
+  // after startup. Retry on a beat instead of guessing one fixed delay,
+  // stopping as soon as it actually sticks (checked one tick later, since
+  // the revert isn't instant either) or after a bounded number of tries.
+  property bool _pinApplied: false
+  property int _pinOpenAttempts: 0
+  onSettingsChanged: {
+    if (!root._pinApplied && Object.keys(root.settings).length > 0) {
+      root._pinApplied = true
+      // Read settings.pinned directly here, not the cached root.pinned --
+      // dependent readonly properties lag one tick behind a fresh settings
+      // assignment inside its own changed-signal handler (confirmed live:
+      // settings.pinned was already true, root.pinned still read false).
+      if (root.settings.pinned === true) pinOpenTimer.restart()
+    }
+  }
+
+  Timer {
+    id: pinOpenTimer
+    interval: 1000
+    repeat: true
+    onTriggered: {
+      root._pinOpenAttempts += 1
+      root.captureFocusedWindow()
+      root.open()
+      pinOpenCheckTimer.restart()
+    }
+  }
+
+  Timer {
+    id: pinOpenCheckTimer
+    interval: 400
+    repeat: false
+    onTriggered: {
+      if (root.opened || root._pinOpenAttempts >= 8) pinOpenTimer.stop()
+    }
+  }
+
+  // In single-column mode the panel narrows to fit the widest visible
+  // button instead of staying at the fixed 3-column card width -- read
+  // from each grid's own implicitWidth (its natural, unstretched content
+  // size), not the stretched width it's actually drawn at.
+  function widestButtonWidth() {
+    var maxW = windowGrid.implicitWidth
+    for (var i = 0; i < sectionsRepeater.count; i++) {
+      var item = sectionsRepeater.itemAt(i)
+      if (item && item.visible && item.gridImplicitWidth > maxW) maxW = item.gridImplicitWidth
+    }
+    return maxW
   }
 
   // Per-button disable, covering every actionSections item across all
@@ -555,7 +636,10 @@ Panel {
     visible: root.opened && !root.audioOnlyMode
     screen: root.anchorWindow ? root.anchorWindow.screen : null
     color: "transparent"
-    exclusionMode: ExclusionMode.Ignore
+    // Pinned reserves real screen space (tiled windows get pushed clear of
+    // it, dock-style) instead of just floating on top where anything can
+    // still tile underneath/behind it.
+    exclusionMode: root.pinned ? ExclusionMode.Auto : ExclusionMode.Ignore
 
     WlrLayershell.namespace: "omarchy-wm-actions-float"
     WlrLayershell.layer: WlrLayer.Overlay
@@ -569,9 +653,17 @@ Panel {
     readonly property int hostBarSize: root.bar ? root.bar.barSize : 0
     readonly property string barPos: root.bar ? root.bar.position : "top"
 
+    // Pinned also anchors the opposite vertical edge, spanning the full
+    // height of its side of the screen instead of just a corner -- a
+    // real wlr-layer-shell exclusive zone reserves space along the whole
+    // length of an anchored edge, so ExclusionMode.Auto below can't compute
+    // a sane reservation from a corner anchor (two edges, no single "this
+    // is the dock edge" to measure from). The card itself still only
+    // occupies its natural content height at the top; the rest of the
+    // anchored strip stays transparent but keeps the reservation live.
     anchors {
-      top: barPos !== "bottom"
-      bottom: barPos === "bottom"
+      top: barPos !== "bottom" || root.pinned
+      bottom: barPos === "bottom" || root.pinned
       left: barPos === "left"
       right: barPos !== "left"
     }
@@ -589,26 +681,44 @@ Panel {
 
     BorderSurface {
       id: card
-      width: Style.space(300)
+      // Floored at 240: the Favorites-only/Settings Toggle rows have a fixed
+      // implicitWidth of Style.space(240) (Toggle.qml) regardless of their
+      // label/description text, so anything narrower truncates/overlaps them.
+      width: root.singleColumn
+        ? Math.max(Style.space(240), root.widestButtonWidth() + contentLeftInset + contentRightInset)
+        : Style.space(300)
       height: Math.min(contentColumn.implicitHeight + contentTopInset + contentBottomInset, floatWin.maxCardHeight)
       color: Color.popups.background
       borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
       padding: Style.spacing.popupPadding
       radius: Style.cornerRadius
 
-      Column {
-        id: contentColumn
+      // ScrollView is a no-op wrapper when content fits (no scrollbar,
+      // no flicking) -- only kicks in once contentColumn's natural height
+      // (everything stacked single-column, say) exceeds the card's own
+      // height cap (floatWin.maxCardHeight above), which a plain Column
+      // would otherwise just silently overflow past the card's bottom edge.
+      ScrollView {
+        id: scrollArea
         x: card.contentLeftInset
         y: card.contentTopInset
         width: card.width - card.contentLeftInset - card.contentRightInset
+        height: card.height - card.contentTopInset - card.contentBottomInset
+        clip: true
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+        ScrollBar.vertical.policy: contentColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+
+        Column {
+        id: contentColumn
+        width: scrollArea.availableWidth
         spacing: Style.space(14)
 
         Button {
+          id: settingsBtn
           width: contentColumn.width
           leftAlign: true
           iconText: "󰒓"
           text: "Settings"
-          tooltipText: root.settingsOpen ? "Collapse settings" : "Windows/stash overview, per-app toggles, add a new app"
           fontSize: Style.font.bodySmall
           iconSize: Style.font.title
           foreground: root.bar.foreground
@@ -618,6 +728,12 @@ Panel {
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
           onClicked: root.settingsOpen = !root.settingsOpen
+        }
+
+        WrappedTooltip {
+          hoverSource: settingsBtn.hot
+          text: root.settingsOpen ? "Collapse settings" : "Windows/stash overview, per-app toggles, add a new app"
+          fontFamily: root.bar.fontFamily
         }
 
         Column {
@@ -643,6 +759,26 @@ Panel {
             foreground: root.bar.foreground
             fontFamily: root.bar.fontFamily
             onClicked: root.toggleShowStashOverview()
+          }
+
+          Toggle {
+            width: parent.width
+            label: "Single column"
+            description: "Stack the action grid one button per row instead of three"
+            checked: root.singleColumn
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            onClicked: root.toggleSingleColumn()
+          }
+
+          Toggle {
+            width: parent.width
+            label: "Pin panel"
+            description: "Reserve screen space (tiled windows won't overlap it) and reopen automatically on shell restart"
+            checked: root.pinned
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            onClicked: root.togglePinned()
           }
 
           Repeater {
@@ -694,11 +830,11 @@ Panel {
           }
 
           Button {
+            id: addAppBtn
             width: parent.width
             leftAlign: true
             iconText: "󰐙"
             text: "Add new app…"
-            tooltipText: "Opens Claude Code in a terminal to add a LAUNCH button -- name, icon, and placement"
             fontSize: Style.font.bodySmall
             iconSize: Style.font.title
             foreground: root.bar.foreground
@@ -707,6 +843,12 @@ Panel {
             horizontalPadding: Style.spacing.controlPaddingX
             verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
             onClicked: root.launchAddAppAssistant()
+          }
+
+          WrappedTooltip {
+            hoverSource: addAppBtn.hot
+            text: "Opens Claude Code in a terminal to add a LAUNCH button -- name, icon, and placement"
+            fontFamily: root.bar.fontFamily
           }
         }
 
@@ -744,8 +886,9 @@ Panel {
           // and the scratchpad button's icon/label/handler swap depending on
           // whether that window is currently in the scratchpad.
           GridLayout {
+            id: windowGrid
             width: parent.width
-            columns: 3
+            columns: root.singleColumn ? 1 : 3
             columnSpacing: Style.space(8)
             rowSpacing: Style.space(8)
 
@@ -802,8 +945,8 @@ Panel {
               Layout.fillWidth: true
               visible: !root.favoritesOnly || root.isFavorite("window.stash")
               iconText: "󰄠"
-              text: "Stash"
-              tooltipText: "Send the focused window to the scratchpad -- restore it later from the STASHED list below"
+              text: "Move to Scratchpad"
+              tooltipText: "Move the focused window to the scratchpad -- restore it later from the STASHED list below"
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
               isFavorite: root.isFavorite("window.stash")
@@ -814,10 +957,12 @@ Panel {
         }
 
         Repeater {
+          id: sectionsRepeater
           model: root.actionSections
           delegate: Column {
             id: sectionColumn
             required property var modelData
+            readonly property real gridImplicitWidth: sectionGrid.implicitWidth
             width: contentColumn.width
             spacing: Style.space(8)
             visible: !root.favoritesOnly || sectionColumn.modelData.items.some(function(it) { return root.isFavorite(it.id) })
@@ -829,8 +974,9 @@ Panel {
             }
 
             GridLayout {
+              id: sectionGrid
               width: parent.width
-              columns: 3
+              columns: root.singleColumn ? 1 : 3
               columnSpacing: Style.space(8)
               rowSpacing: Style.space(8)
 
@@ -896,7 +1042,6 @@ Panel {
               id: cancelBtn
               visible: root.dictationRecording || root.dictationTranscribing
               iconText: "󰍭"
-              tooltipText: "Cancel dictation -- discard, no transcription"
               fontSize: Style.font.bodySmall
               iconSize: Style.font.title
               foreground: root.bar.foreground
@@ -910,7 +1055,6 @@ Panel {
             Button {
               id: audioOnlyBtn
               iconText: "󰋋"
-              tooltipText: "Audio only -- shrink to just the dictation switch, top-right corner"
               fontSize: Style.font.bodySmall
               iconSize: Style.font.title
               foreground: root.bar.foreground
@@ -919,6 +1063,18 @@ Panel {
               horizontalPadding: Style.spacing.controlPaddingX
               verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
               onClicked: root.enterAudioOnlyMode()
+            }
+
+            WrappedTooltip {
+              hoverSource: cancelBtn.visible && cancelBtn.hot
+              text: "Cancel dictation -- discard, no transcription"
+              fontFamily: root.bar.fontFamily
+            }
+
+            WrappedTooltip {
+              hoverSource: audioOnlyBtn.hot
+              text: "Audio only -- shrink to just the dictation switch, top-right corner"
+              fontFamily: root.bar.fontFamily
             }
           }
         }
@@ -1019,11 +1175,11 @@ Panel {
               spacing: Style.space(6)
 
               Button {
+                id: restoreBtn
                 width: parent.width - stashedCloseBtn.width - parent.spacing
                 leftAlign: true
                 iconText: "󰄝"
                 text: modelData.title
-                tooltipText: "Restore to its original workspace"
                 fontSize: Style.font.bodySmall
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
@@ -1031,6 +1187,12 @@ Panel {
                 horizontalPadding: Style.spacing.controlPaddingX
                 verticalPadding: Style.spacing.controlPaddingY
                 onClicked: root.restoreWindow(modelData.address)
+              }
+
+              WrappedTooltip {
+                hoverSource: restoreBtn.hot
+                text: "Restore to its original workspace"
+                fontFamily: root.bar.fontFamily
               }
 
               Button {
@@ -1047,6 +1209,7 @@ Panel {
             }
           }
         }
+        }
       }
     }
   }
@@ -1059,7 +1222,7 @@ Panel {
     visible: root.opened && root.audioOnlyMode
     screen: root.anchorWindow ? root.anchorWindow.screen : null
     color: "transparent"
-    exclusionMode: ExclusionMode.Ignore
+    exclusionMode: root.pinned ? ExclusionMode.Auto : ExclusionMode.Ignore
 
     WlrLayershell.namespace: "omarchy-wm-actions-audio-only"
     WlrLayershell.layer: WlrLayer.Overlay
