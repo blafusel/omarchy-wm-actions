@@ -16,14 +16,16 @@ Built for dual-monitor setups where one screen is driven from a different PC and
 
 ## Actions
 
-- **WINDOW** - Scratchpad toggle, Float toggle, Fullscreen toggle, Close, Move to Scratchpad
+- **WINDOW** - Scratchpad toggle, Float toggle, Fullscreen toggle, Close, Move to Scratchpad, Group, Ungroup
 - **CLIPBOARD** - Copy, Paste, Cut
 - **KEYS** - Escape, Up (hold to repeat), Return, Backspace (hold to repeat), Ctrl+C (sent as synthetic key presses)
 - **LAUNCH** - Launcher, Browser, Terminal, Plex, Herdr (opens in a terminal -- no `.desktop` file, it's a CLI tool)
 - **SYSTEM** - Screenshot, Keybindings cheat sheet
 - **DICTATION** - Start/stop switch for Voxtype dictation (`voxtype record toggle`), live state pulled from `omarchy-voxtype-status`; a Cancel button (mic-off icon) appears next to it while recording/transcribing to discard instead of transcribing (`voxtype record cancel`); a headphones icon next to that switches to **Audio only** mode
 
-WINDOW's last two buttons act on whatever window had focus right before the panel opened: **Close** closes it, and **Move to Scratchpad** sends it to the scratchpad, remembering which workspace it came from. This is a per-window move, different from the **Scratchpad** button above it, which just toggles the whole special scratchpad workspace's visibility without moving anything.
+WINDOW's last four buttons act on whatever window had focus right before the panel opened: **Close** closes it, and **Move to Scratchpad** sends it to the scratchpad, remembering which workspace it came from. This is a per-window move, different from the **Scratchpad** button above it, which just toggles the whole special scratchpad workspace's visibility without moving anything.
+
+**Group** and **Ungroup** are one-way: Hyprland only exposes grouping as a single toggle dispatcher, so clicking Group is a no-op if the window's already grouped (and likewise Ungroup if it isn't), instead of both buttons sharing one toggle and doing the wrong thing depending on current state.
 
 Bringing a window back out is a separate step, on purpose: by the time you come back for something you stashed "for later," focus has moved on, so there's nothing meaningful left for a single Stash/Restore toggle to act on. Instead, every window actually sitting in the scratchpad shows up in its own **STASHED** list further down — click one to restore it (to its remembered origin workspace, or the current workspace if it got into the scratchpad some other way), or ✕ to close it outright.
 
@@ -97,6 +99,7 @@ omarchy plugin disable io.github.blafusel.wm-actions
 
 ## Changelog
 
+- **1.5.1** — Added WINDOW > Group and Ungroup. Hyprland only exposes grouping as a single toggle dispatcher, so each button checks the captured window's current group state first and no-ops rather than flipping the wrong way.
 - **1.5.0** — Added LAUNCH > Herdr. Added Settings > Single column (scrollable, card narrows to fit the widest button) and Pin panel (reserves screen space along its edge, reopens automatically on shell restart). Tooltips now word-wrap at a fixed max width instead of overflowing past the card's edge. Renamed WINDOW > Stash to Move to Scratchpad to match what it actually does.
 - **1.4.6** — Added KEYS > Up (hold to repeat) and Ctrl+C. Added a dictation Cancel button (discards instead of transcribing) and an Audio only mode (compact top-right dictation-only widget, persisted, entered via headphones icon or right-clicking the bar icon). Middle-click the bar icon to toggle the scratchpad directly. Added a Settings menu: Windows/Stash overview toggles, per-button enable/disable by category, and an "Add new app…" action that opens Claude Code to implement a new LAUNCH button. Fixed the Terminal button's missing icon.
 - **1.4.5** — Added LAUNCH > Plex, launched via `gtk-launch plex-desktop_plex-desktop` (desktop-file id, not a hardcoded binary path, so it works regardless of install method).

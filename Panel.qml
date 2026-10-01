@@ -122,7 +122,7 @@ Panel {
     root.persistSettings({ favoritesOnly: !root.favoritesOnly })
   }
 
-  readonly property var windowSectionFavIds: ["window.scratchpad", "window.float", "window.fullscreen", "window.close", "window.stash"]
+  readonly property var windowSectionFavIds: ["window.scratchpad", "window.float", "window.fullscreen", "window.close", "window.stash", "window.group", "window.ungroup"]
   readonly property bool windowSectionHasVisibleItems: !root.favoritesOnly || root.windowSectionFavIds.some(function(favId) { return root.isFavorite(favId) })
 
   // ---- settings menu ----
@@ -321,6 +321,13 @@ Panel {
   // Ctrl+V vs. Shift+Insert for Paste -- see pasteClipboard() below.
   property bool lastFocusedIsTerminal: false
 
+  // Whether the captured window is currently part of a group ("grouped" is
+  // a non-empty array of member addresses, including itself, once grouped).
+  // Lets Group/Ungroup each be a one-way action instead of both sharing
+  // Hyprland's own single toggle dispatcher -- see groupActiveWindow()/
+  // ungroupActiveWindow() below.
+  property bool lastFocusedIsGrouped: false
+
   // address -> origin workspace name, recorded right before a window is sent
   // to the scratchpad so Restore can send it back precisely. Session-only
   // (not persisted): a window stashed in an earlier session, or by some
@@ -343,6 +350,7 @@ Panel {
       root.lastFocusedIsTerminal = Array.isArray(data.tags) && data.tags.some(function(t) {
         return String(t).replace(/\*$/, "") === "terminal"
       })
+      root.lastFocusedIsGrouped = Array.isArray(data.grouped) && data.grouped.length > 0
     }
   }
 
@@ -356,6 +364,33 @@ Panel {
     if (root.lastFocusedAddress) {
       Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.window.close({ window = 'address:" + root.lastFocusedAddress + "' })"])
     }
+  }
+
+  // Hyprland only exposes grouping as a single toggle (hl.dsp.group.toggle
+  // -- confirmed live: same call on the same window flips "grouped": []
+  // to "grouped": [self] and back). Group/Ungroup read lastFocusedIsGrouped
+  // first so each button is a one-way action instead of both sharing that
+  // toggle and doing the wrong thing depending on current state. Re-captures
+  // afterward so the cached state (and the next click) reflects the change.
+  function groupActiveWindow() {
+    if (root.lastFocusedAddress && !root.lastFocusedIsGrouped) {
+      Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.group.toggle({ window = 'address:" + root.lastFocusedAddress + "' })"])
+      groupRefreshTimer.restart()
+    }
+  }
+
+  function ungroupActiveWindow() {
+    if (root.lastFocusedAddress && root.lastFocusedIsGrouped) {
+      Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.group.toggle({ window = 'address:" + root.lastFocusedAddress + "' })"])
+      groupRefreshTimer.restart()
+    }
+  }
+
+  Timer {
+    id: groupRefreshTimer
+    interval: 150
+    repeat: false
+    onTriggered: root.captureFocusedWindow()
   }
 
   // Stashes whatever was focused right before the panel opened. Restoring
@@ -952,6 +987,32 @@ Panel {
               isFavorite: root.isFavorite("window.stash")
               onFavoriteToggled: root.toggleFavorite("window.stash")
               onClicked: root.stashActiveWindow()
+            }
+
+            FavButton {
+              Layout.fillWidth: true
+              visible: !root.favoritesOnly || root.isFavorite("window.group")
+              iconText: "󰋃"
+              text: "Group"
+              tooltipText: "Group the focused window with its neighbor -- no-op if it's already grouped"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              isFavorite: root.isFavorite("window.group")
+              onFavoriteToggled: root.toggleFavorite("window.group")
+              onClicked: root.groupActiveWindow()
+            }
+
+            FavButton {
+              Layout.fillWidth: true
+              visible: !root.favoritesOnly || root.isFavorite("window.ungroup")
+              iconText: "󰕐"
+              text: "Ungroup"
+              tooltipText: "Remove the focused window from its group -- no-op if it's not grouped"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              isFavorite: root.isFavorite("window.ungroup")
+              onFavoriteToggled: root.toggleFavorite("window.ungroup")
+              onClicked: root.ungroupActiveWindow()
             }
           }
         }
