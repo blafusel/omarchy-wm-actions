@@ -669,21 +669,40 @@ Panel {
   // one flag is the right single signal for "the panel is up in some
   // form". Restored to whatever it actually was, not hardcoded back to 1,
   // in case the user runs with it already off (or set to 2) normally.
-  property int savedFollowMouse: 1
+  //
+  // The captured value has to be persisted (shell.json), not just a plain
+  // property -- `omarchy restart shell` kills the process outright, so
+  // restoreFollowMouse() from the previous session never runs while
+  // pinned (always open). A plain property would then get re-captured on
+  // the pin's auto-reopen with the CURRENT value, which is already the
+  // disabled 0 from before the restart -- trapping 0 as the "original" to
+  // restore to, forever, on every subsequent restart. followMouseForced
+  // (also persisted) guards against exactly that: only actually capture
+  // while nothing has it force-disabled yet.
+  readonly property int followMouseOriginal: root.setting("followMouseOriginal", 1)
+  readonly property bool followMouseForced: root.setting("followMouseForced", false)
 
   function disableFollowMouse() {
-    if (!followMouseProc.running) followMouseProc.running = true
+    if (root.followMouseForced) {
+      // Already forced (e.g. a killed-and-restarted pinned session) --
+      // reassert 0 without touching the persisted original.
+      Quickshell.execDetached(["hyprctl", "eval", "hl.config({ input = { follow_mouse = 0 } })"])
+    } else if (!followMouseProc.running) {
+      followMouseProc.running = true
+    }
   }
 
   function handleFollowMouseOption(raw) {
     var data
     try { data = JSON.parse(raw) } catch (e) { data = null }
-    if (data && typeof data.int === "number") root.savedFollowMouse = data.int
+    var value = (data && typeof data.int === "number") ? data.int : 1
+    root.persistSettings({ followMouseOriginal: value, followMouseForced: true })
     Quickshell.execDetached(["hyprctl", "eval", "hl.config({ input = { follow_mouse = 0 } })"])
   }
 
   function restoreFollowMouse() {
-    Quickshell.execDetached(["hyprctl", "eval", "hl.config({ input = { follow_mouse = " + root.savedFollowMouse + " } })"])
+    Quickshell.execDetached(["hyprctl", "eval", "hl.config({ input = { follow_mouse = " + root.followMouseOriginal + " } })"])
+    root.persistSettings({ followMouseForced: false })
   }
 
   Process {
