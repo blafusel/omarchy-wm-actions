@@ -5,6 +5,7 @@ A compact Omarchy bar widget: a mouse-only floating panel of common Hyprland act
 Click the bar icon to open the panel. Middle-click it to toggle the scratchpad directly, no panel needed. Right-click it to jump straight into **Audio only** mode (see below). It's a standalone floating window (`PanelWindow`, `WlrKeyboardFocus.None`), not the usual click-away-to-dismiss bar popup:
 
 - **It never steals keyboard focus.** Opening it or clicking its buttons doesn't touch whatever window you were using — verified live (a synthetic keypress reaches a focused terminal while the panel is open). This is what makes the DICTATION switch actually work: the window you're dictating into keeps focus the whole time.
+- **It temporarily turns off focus-follows-mouse.** `input:follow_mouse` is forced off for as long as the panel (full grid or Audio only) is open, and restored to whatever it actually was the moment it closes. Without this, moving the cursor across the panel to click something would itself steal focus (if you normally run with focus-follows-mouse on) from the window CLIPBOARD/KEYS/dictation are targeting, out from under the panel's own explicit window-targeting below -- none of that targeting holds up otherwise.
 - **It doesn't swallow clicks.** There's no full-screen catcher, so clicking another window while this panel is open reaches that window normally, and the panel never auto-closes after firing an action — it only closes via the bar icon or IPC.
 - Tradeoff versus a standard bar popup: no fade animation, no click-away-to-dismiss, and no mutual exclusion with other bar popups.
 
@@ -18,7 +19,7 @@ Built for dual-monitor setups where one screen is driven from a different PC and
 
 - **WINDOW** - Scratchpad toggle, Float toggle, Fullscreen toggle, Close, Move to Scratchpad, Group, Ungroup
 - **CLIPBOARD** - Copy, Paste, Cut
-- **KEYS** - Escape, Up (hold to repeat), Return, Backspace (hold to repeat), Ctrl+C (sent as synthetic key presses)
+- **KEYS** - Escape, Up (hold to repeat), Return, 10x Ctrl+Backspace, Ctrl+C (sent as synthetic key presses)
 - **LAUNCH** - Launcher, Browser, Terminal, Plex, Herdr (opens in a terminal -- no `.desktop` file, it's a CLI tool)
 - **SYSTEM** - Screenshot, Keybindings cheat sheet
 - **DICTATION** - Start/stop switch for Voxtype dictation (`voxtype record toggle`), live state pulled from `omarchy-voxtype-status`; a Cancel button (mic-off icon) appears next to it while recording/transcribing to discard instead of transcribing (`voxtype record cancel`); a headphones icon next to that switches to **Audio only** mode
@@ -33,7 +34,7 @@ Since the panel stays open across workspace switches, the captured window, the S
 
 KEYS targets the window that had focus right before the panel opened explicitly (via `send_key_state`'s `window` field), rather than relying on ambient seat focus — clicking a button in the panel is itself a pointer event on the panel's own surface, which was enough to disrupt plain ambient-focus delivery.
 
-**Backspace** repeats while held down, like a real key: an initial ~450ms delay, then fires roughly every 75ms until released. The first press is a full-weight dispatch (explicit refocus, then a settled down/up `send_key_state` pair) same as Escape/Return; every repeat tick after that uses a lighter, faster path with no refocus/settle (focus is already correct once you're holding a button down) — that's what lets the repeat rate go this fast without the repeats just resetting each other's timers into never firing at all.
+**10x Ctrl+Backspace** fires Ctrl+Backspace ten times on one click, fast enough to clear most text fields in one go instead of holding a key. The first press is a full-weight dispatch (explicit refocus, then a settled down/up `send_key_state` pair) same as every other button; the remaining nine use the same lighter, faster path FavButton's own hold-to-repeat uses (no refocus/settle needed once the first press has already landed), spaced 60ms apart -- comfortably clear of that path's own ~25ms cycle, so they don't starve each other the way scheduling faster than a cycle completes would.
 
 CLIPBOARD doesn't send SUPER+C/V/X anymore. Hyprland's global "Universal clipboard" binds never fire for synthetic virtual-keyboard input at all — confirmed directly: even `SUPER+S` (toggle scratchpad) silently no-ops when sent this way, the workspace never changes. Global keybinds apparently only respond to real hardware input, likely a deliberate compositor-level boundary. Copy/Cut instead read the Wayland **primary selection** (auto-populated by most apps/terminals whenever text is selected, no keypress involved at all) and write it to the clipboard directly; Cut then removes the selection with a plain Delete key. Paste sends an ordinary Ctrl+V (Shift+Insert in a terminal, where Ctrl+V usually means something else) — a normal app/terminal-level shortcut, not a compositor bind, so it's delivered reliably the same way Escape/Return are.
 
@@ -99,6 +100,7 @@ omarchy plugin disable io.github.blafusel.wm-actions
 
 ## Changelog
 
+- **1.5.4** — Replaced KEYS > Backspace with 10x Ctrl+Backspace (fires Ctrl+Backspace ten times fast on one click to clear a field, instead of hold-to-repeat). While the panel (either the full grid or the audio-only widget) is open, `input:follow_mouse` is forced off and restored to whatever it actually was on close -- without it, moving the cursor across the panel to click something stole focus from whatever CLIPBOARD/KEYS/dictation was targeting, out from under the panel's own explicit window-targeting.
 - **1.5.3** — Fixed Pin panel leaving a gap below the bar: switching to `ExclusionMode.Auto` made the surface respect the bar's own reserved zone, but it was still also adding the bar's height into its own margin on top of that -- double-counting it (confirmed live: computed margin was correct, but the surface still rendered offset by the bar's height again). Margin is now 0 when pinned; the compositor alone pushes it clear of the bar. Updated preview.png.
 - **1.5.2** — Fixed Ungroup: the toggle dispatcher it used to use, targeted at one member's address, dissolved the entire group instead of just removing that window (confirmed live on a real multi-window group). Now uses `HL.Group:remove(window)` via `hyprctl eval` instead, which correctly leaves the rest of the group intact.
 - **1.5.1** — Added WINDOW > Group and Ungroup. Hyprland only exposes grouping as a single toggle dispatcher, so each button checks the captured window's current group state first and no-ops rather than flipping the wrong way.

@@ -60,7 +60,7 @@ Panel {
         { id: "keys.escape",    icon: "⎋", label: "Escape",    type: "key", key: "Escape" },
         { id: "keys.up",        icon: "󰁝", label: "Up",        type: "key", key: "Up", repeat: true },
         { id: "keys.return",    icon: "⏎", label: "Return",    type: "key", key: "Return" },
-        { id: "keys.backspace", icon: "󰁮", label: "Backspace", type: "key", key: "BackSpace", repeat: true },
+        { id: "keys.backspace", icon: "󰁮", label: "10x Ctrl+Backspace", tooltip: "Fires Ctrl+Backspace 10x fast -- deletes everything in the current text field", type: "burst", key: "BackSpace", mods: "CTRL", count: 10, intervalMs: 60 },
         { id: "keys.ctrl_c",    icon: "󰓛", label: "Ctrl+C",    type: "key", key: "C", mods: "CTRL" }
       ]
     },
@@ -438,7 +438,37 @@ Panel {
     else if (action.type === "copy") copySelection()
     else if (action.type === "cut") cutSelection()
     else if (action.type === "paste") pasteClipboard()
+    else if (action.type === "burst") burstKey(action.key, action.mods || "", action.count || 1, action.intervalMs || 60)
     else Quickshell.execDetached(action.cmd)
+  }
+
+  // Fires one key N times fast on a single click (e.g. 10x Ctrl+Backspace
+  // to clear a field) -- distinct from repeatOnHold, which fires once per
+  // held-down tick instead of a fixed count on one click. First press goes
+  // through sendKey() (explicit refocus + settle, same as every other
+  // first press); the rest use sendKeyFast's lighter ~25ms cycle, same as
+  // FavButton's own repeat ticks. 60ms spacing leaves comfortable headroom
+  // over that ~25ms cycle -- see sendKeyFast's own comment on the
+  // starvation risk of scheduling faster than a cycle completes.
+  property var burstState: ({ key: "", mods: "", remaining: 0 })
+
+  function burstKey(key, mods, count, intervalMs) {
+    root.sendKey(key, mods)
+    root.burstState = { key: key, mods: mods, remaining: count - 1 }
+    if (root.burstState.remaining > 0) {
+      burstTimer.interval = intervalMs
+      burstTimer.restart()
+    }
+  }
+
+  Timer {
+    id: burstTimer
+    repeat: true
+    onTriggered: {
+      root.sendKeyFast(root.burstState.key, root.burstState.mods)
+      root.burstState.remaining -= 1
+      if (root.burstState.remaining <= 0) burstTimer.stop()
+    }
   }
 
   // Copy/Cut/Paste used to send SUPER+C/V/X hoping Hyprland's global
@@ -622,7 +652,44 @@ Panel {
     if (opened) {
       refreshWindows()
       captureFocusedWindow()
+      root.disableFollowMouse()
+    } else {
+      root.restoreFollowMouse()
     }
+  }
+
+  // Every button click is a real pointer event -- with focus-follows-mouse
+  // on, moving the cursor across the panel to click something steals
+  // keyboard focus from whatever window CLIPBOARD/KEYS/the dictation
+  // switch is supposed to be targeting, out from under the panel's own
+  // explicit window-targeting (windowClause() etc.). Without this, none of
+  // that targeting actually holds up. `opened` alone covers both the full
+  // grid and the audio-only widget (see floatWin/audioWin's visible
+  // bindings above -- exactly one is up whenever opened is true), so this
+  // one flag is the right single signal for "the panel is up in some
+  // form". Restored to whatever it actually was, not hardcoded back to 1,
+  // in case the user runs with it already off (or set to 2) normally.
+  property int savedFollowMouse: 1
+
+  function disableFollowMouse() {
+    if (!followMouseProc.running) followMouseProc.running = true
+  }
+
+  function handleFollowMouseOption(raw) {
+    var data
+    try { data = JSON.parse(raw) } catch (e) { data = null }
+    if (data && typeof data.int === "number") root.savedFollowMouse = data.int
+    Quickshell.execDetached(["hyprctl", "eval", "hl.config({ input = { follow_mouse = 0 } })"])
+  }
+
+  function restoreFollowMouse() {
+    Quickshell.execDetached(["hyprctl", "eval", "hl.config({ input = { follow_mouse = " + root.savedFollowMouse + " } })"])
+  }
+
+  Process {
+    id: followMouseProc
+    command: ["hyprctl", "-j", "getoption", "input:follow_mouse"]
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.handleFollowMouseOption(text) }
   }
 
   // The panel no longer auto-closes, so it can sit open across workspace
@@ -1069,6 +1136,7 @@ Panel {
                   visible: (!root.favoritesOnly || root.isFavorite(modelData.id)) && !root.isActionDisabled(modelData.id)
                   iconText: modelData.icon
                   text: modelData.label
+                  tooltipText: modelData.tooltip || ""
                   foreground: root.bar.foreground
                   fontFamily: root.bar.fontFamily
                   isFavorite: root.isFavorite(modelData.id)
