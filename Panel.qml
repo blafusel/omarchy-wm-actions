@@ -713,11 +713,20 @@ Panel {
       left: barPos === "left"
       right: barPos !== "left"
     }
+    // Pinned needs a *different* margin shape, not just a smaller one: once
+    // ExclusionMode.Auto makes this surface respect other layers' reserved
+    // zones (Ignore doesn't), the compositor already pushes it clear of the
+    // bar's own 26px reservation on its own. Manually adding hostBarSize to
+    // the margin on top of that double-counts the bar's height -- confirmed
+    // live (margins.top computed 26 as intended, but the surface still
+    // rendered at y=52, exactly hostBarSize + the compositor's own
+    // bar-respecting push). Ignore mode (not pinned) never got that
+    // compositor push, so it still needs the full self-computed margin.
     margins {
-      top: (barPos === "top" ? hostBarSize : 0) + gap
-      bottom: (barPos === "bottom" ? hostBarSize : 0) + gap
-      left: (barPos === "left" ? hostBarSize : 0) + gap
-      right: (barPos === "right" ? hostBarSize : 0) + gap
+      top: root.pinned ? 0 : ((barPos === "top" ? hostBarSize : 0) + gap)
+      bottom: root.pinned ? 0 : ((barPos === "bottom" ? hostBarSize : 0) + gap)
+      left: root.pinned ? 0 : ((barPos === "left" ? hostBarSize : 0) + gap)
+      right: root.pinned ? 0 : ((barPos === "right" ? hostBarSize : 0) + gap)
     }
 
     readonly property real maxCardHeight: Math.max(120, (screen ? screen.height : 900) - margins.top - margins.bottom)

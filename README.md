@@ -99,6 +99,7 @@ omarchy plugin disable io.github.blafusel.wm-actions
 
 ## Changelog
 
+- **1.5.3** — Fixed Pin panel leaving a gap below the bar: switching to `ExclusionMode.Auto` made the surface respect the bar's own reserved zone, but it was still also adding the bar's height into its own margin on top of that -- double-counting it (confirmed live: computed margin was correct, but the surface still rendered offset by the bar's height again). Margin is now 0 when pinned; the compositor alone pushes it clear of the bar. Updated preview.png.
 - **1.5.2** — Fixed Ungroup: the toggle dispatcher it used to use, targeted at one member's address, dissolved the entire group instead of just removing that window (confirmed live on a real multi-window group). Now uses `HL.Group:remove(window)` via `hyprctl eval` instead, which correctly leaves the rest of the group intact.
 - **1.5.1** — Added WINDOW > Group and Ungroup. Hyprland only exposes grouping as a single toggle dispatcher, so each button checks the captured window's current group state first and no-ops rather than flipping the wrong way.
 - **1.5.0** — Added LAUNCH > Herdr. Added Settings > Single column (scrollable, card narrows to fit the widest button) and Pin panel (reserves screen space along its edge, reopens automatically on shell restart). Tooltips now word-wrap at a fixed max width instead of overflowing past the card's edge. Renamed WINDOW > Stash to Move to Scratchpad to match what it actually does.
