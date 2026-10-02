@@ -368,10 +368,11 @@ Panel {
 
   // Hyprland only exposes grouping as a single toggle (hl.dsp.group.toggle
   // -- confirmed live: same call on the same window flips "grouped": []
-  // to "grouped": [self] and back). Group/Ungroup read lastFocusedIsGrouped
-  // first so each button is a one-way action instead of both sharing that
-  // toggle and doing the wrong thing depending on current state. Re-captures
-  // afterward so the cached state (and the next click) reflects the change.
+  // to "grouped": [self] and back). Group reads lastFocusedIsGrouped first
+  // so it's a one-way action (no-op if already grouped) instead of flipping
+  // the wrong way depending on current state. Re-captures afterward so the
+  // cached state (and the next click) reflects the change. Toggle only
+  // ever grouped/ungrouped a lone window in testing, so it's fine here.
   function groupActiveWindow() {
     if (root.lastFocusedAddress && !root.lastFocusedIsGrouped) {
       Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.group.toggle({ window = 'address:" + root.lastFocusedAddress + "' })"])
@@ -379,9 +380,19 @@ Panel {
     }
   }
 
+  // NOT hl.dsp.group.toggle here -- confirmed live on a real multi-window
+  // group: toggle targeted at one member's address dissolved the entire
+  // group (every member came back ungrouped), not just that one window.
+  // HL.Group:remove(window) (via `hyprctl eval`, the one hyprctl entry
+  // point that runs arbitrary Lua rather than a single dispatcher
+  // expression) is the primitive that actually removes just the one
+  // window and leaves the rest of the group intact -- verified live on a
+  // disposable 3-window group (removed window ends up ungrouped, the
+  // other two stay grouped with each other).
   function ungroupActiveWindow() {
     if (root.lastFocusedAddress && root.lastFocusedIsGrouped) {
-      Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.group.toggle({ window = 'address:" + root.lastFocusedAddress + "' })"])
+      Quickshell.execDetached(["hyprctl", "eval",
+        "local gw = hl.get_window('address:" + root.lastFocusedAddress + "'); if gw and gw.group then gw.group:remove(gw) end"])
       groupRefreshTimer.restart()
     }
   }
