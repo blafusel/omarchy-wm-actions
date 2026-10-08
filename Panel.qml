@@ -122,6 +122,69 @@ Panel {
     root.persistSettings({ favoritesOnly: !root.favoritesOnly })
   }
 
+  // Collapsed section titles, persisted in shell.json like favorites so
+  // collapse state survives shell restarts.
+  readonly property var collapsedSections: root.setting("collapsedSections", [])
+
+  function isCollapsed(title) {
+    return root.collapsedSections.indexOf(title) !== -1
+  }
+
+  // Reorderable sections. sectionOrder is the persisted order, normalized so
+  // unknown ids are dropped and any new/missing section is appended in
+  // default order. dragOrder overrides it live while a header is being
+  // dragged and is only written to settings on release.
+  readonly property var defaultSectionOrder: ["WINDOW"].concat(root.actionSections.map(function(s) { return s.title }), ["WINDOWS", "STASHED"])
+  readonly property var sectionOrder: {
+    var saved = root.setting("sectionOrder", [])
+    var out = saved.filter(function(id) { return root.defaultSectionOrder.indexOf(id) !== -1 })
+    root.defaultSectionOrder.forEach(function(id) { if (out.indexOf(id) === -1) out.push(id) })
+    return out
+  }
+  property var dragOrder: null
+  property string draggingId: ""
+
+  function sectionRow(id) {
+    var i = (root.dragOrder || root.sectionOrder).indexOf(id)
+    return i < 0 ? 999 : i
+  }
+
+  // Moves `id` to wherever the pointer (gy, in sectionsGrid coordinates)
+  // currently is, by swapping into the visible section under it.
+  function dragSection(id, gy) {
+    root.draggingId = id
+    var order = (root.dragOrder || root.sectionOrder).slice()
+    var cur = order.indexOf(id)
+    var kids = sectionsGrid.children
+    for (var i = 0; i < kids.length; i++) {
+      var k = kids[i]
+      if (!k.sectionId || k.sectionId === id || !k.visible) continue
+      if (gy >= k.y && gy < k.y + k.height) {
+        var target = order.indexOf(k.sectionId)
+        if (target !== -1 && target !== cur) {
+          order.splice(cur, 1)
+          order.splice(target, 0, id)
+          root.dragOrder = order
+        }
+        break
+      }
+    }
+  }
+
+  function endDrag() {
+    if (root.dragOrder) root.persistSettings({ sectionOrder: root.dragOrder })
+    root.dragOrder = null
+    root.draggingId = ""
+  }
+
+  function toggleCollapsed(title) {
+    var next = root.collapsedSections.slice()
+    var idx = next.indexOf(title)
+    if (idx !== -1) next.splice(idx, 1)
+    else next.push(title)
+    root.persistSettings({ collapsedSections: next })
+  }
+
   readonly property var windowSectionFavIds: ["window.scratchpad", "window.float", "window.fullscreen", "window.close", "window.stash", "window.group", "window.ungroup"]
   readonly property bool windowSectionHasVisibleItems: !root.favoritesOnly || root.windowSectionFavIds.some(function(favId) { return root.isFavorite(favId) })
 
@@ -1153,13 +1216,30 @@ Panel {
           foreground: root.bar.foreground
         }
 
-        Column {
+        // Reorderable sections. Row placement comes from Layout.row (driven by
+        // the persisted sectionOrder), so reordering never touches the
+        // declaration order below.
+        GridLayout {
+          id: sectionsGrid
           width: contentColumn.width
+          columns: 1
+          rowSpacing: Style.space(14)
+
+        Column {
+          property string sectionId: "WINDOW"
+          opacity: root.draggingId === sectionId ? 0.55 : 1
+          Layout.fillWidth: true
+          Layout.column: 0
+          Layout.row: root.sectionRow("WINDOW")
           spacing: Style.space(8)
           visible: root.windowSectionHasVisibleItems
 
-          PanelSectionHeader {
+          CollapsibleHeader {
             text: "WINDOW"
+            collapsed: root.isCollapsed("WINDOW")
+            onToggled: root.toggleCollapsed("WINDOW")
+            onDragMoved: function(my) { root.dragSection("WINDOW", mapToItem(sectionsGrid, 0, my).y) }
+            onDragFinished: root.endDrag()
             foreground: root.bar.foreground
             fontFamily: root.bar.fontFamily
           }
@@ -1170,6 +1250,7 @@ Panel {
           // whether that window is currently in the scratchpad.
           GridLayout {
             id: windowGrid
+            visible: !root.isCollapsed("WINDOW")
             width: parent.width
             columns: root.singleColumn ? 1 : 3
             columnSpacing: Style.space(8)
@@ -1298,18 +1379,27 @@ Panel {
             id: sectionColumn
             required property var modelData
             readonly property real gridImplicitWidth: sectionGrid.implicitWidth
-            width: contentColumn.width
+            property string sectionId: modelData.title
+            opacity: root.draggingId === sectionId ? 0.55 : 1
+            Layout.fillWidth: true
+            Layout.column: 0
+            Layout.row: root.sectionRow(modelData.title)
             spacing: Style.space(8)
             visible: !root.favoritesOnly || sectionColumn.modelData.items.some(function(it) { return root.isFavorite(it.id) })
 
-            PanelSectionHeader {
+            CollapsibleHeader {
               text: sectionColumn.modelData.title
+              collapsed: root.isCollapsed(sectionColumn.modelData.title)
+              onToggled: root.toggleCollapsed(sectionColumn.modelData.title)
+              onDragMoved: function(my) { root.dragSection(sectionColumn.modelData.title, mapToItem(sectionsGrid, 0, my).y) }
+              onDragFinished: root.endDrag()
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
             }
 
             GridLayout {
               id: sectionGrid
+              visible: !root.isCollapsed(sectionColumn.modelData.title)
               width: parent.width
               columns: root.singleColumn ? 1 : 3
               columnSpacing: Style.space(8)
@@ -1337,24 +1427,27 @@ Panel {
           }
         }
 
-        PanelSeparator {
-          foreground: root.bar.foreground
-          visible: root.showWindowsOverview || root.showStashOverview
-        }
-
         Column {
-          width: contentColumn.width
+          property string sectionId: "WINDOWS"
+          opacity: root.draggingId === sectionId ? 0.55 : 1
+          Layout.fillWidth: true
+          Layout.column: 0
+          Layout.row: root.sectionRow("WINDOWS")
           spacing: Style.space(8)
           visible: root.showWindowsOverview
 
-          PanelSectionHeader {
+          CollapsibleHeader {
             text: "WINDOWS — THIS WORKSPACE"
+            collapsed: root.isCollapsed("WINDOWS")
+            onToggled: root.toggleCollapsed("WINDOWS")
+            onDragMoved: function(my) { root.dragSection("WINDOWS", mapToItem(sectionsGrid, 0, my).y) }
+            onDragFinished: root.endDrag()
             foreground: root.bar.foreground
             fontFamily: root.bar.fontFamily
           }
 
           Text {
-            visible: root.windows.length === 0
+            visible: root.windows.length === 0 && !root.isCollapsed("WINDOWS")
             text: "No other windows"
             color: root.bar.foreground
             opacity: 0.6
@@ -1366,6 +1459,7 @@ Panel {
             model: root.windows
             delegate: Row {
               required property var modelData
+              visible: !root.isCollapsed("WINDOWS")
               width: parent.width
               spacing: Style.space(6)
 
@@ -1397,24 +1491,27 @@ Panel {
           }
         }
 
-        PanelSeparator {
-          foreground: root.bar.foreground
-          visible: root.showWindowsOverview && root.showStashOverview
-        }
-
         Column {
-          width: contentColumn.width
+          property string sectionId: "STASHED"
+          opacity: root.draggingId === sectionId ? 0.55 : 1
+          Layout.fillWidth: true
+          Layout.column: 0
+          Layout.row: root.sectionRow("STASHED")
           spacing: Style.space(8)
           visible: root.showStashOverview
 
-          PanelSectionHeader {
+          CollapsibleHeader {
             text: "STASHED"
+            collapsed: root.isCollapsed("STASHED")
+            onToggled: root.toggleCollapsed("STASHED")
+            onDragMoved: function(my) { root.dragSection("STASHED", mapToItem(sectionsGrid, 0, my).y) }
+            onDragFinished: root.endDrag()
             foreground: root.bar.foreground
             fontFamily: root.bar.fontFamily
           }
 
           Text {
-            visible: root.stashedWindows.length === 0
+            visible: root.stashedWindows.length === 0 && !root.isCollapsed("STASHED")
             text: "Nothing stashed"
             color: root.bar.foreground
             opacity: 0.6
@@ -1429,6 +1526,7 @@ Panel {
             model: root.stashedWindows
             delegate: Row {
               required property var modelData
+              visible: !root.isCollapsed("STASHED")
               width: parent.width
               spacing: Style.space(6)
 
@@ -1466,6 +1564,7 @@ Panel {
               }
             }
           }
+        }
         }
         }
       }
