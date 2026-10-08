@@ -74,6 +74,7 @@ Panel {
         // of install method (snap/flatpak/native) -- the desktop file id is
         // the .desktop filename without its extension.
         { id: "launch.plex",     icon: "󰚺", label: "Plex",     type: "exec", cmd: ["gtk-launch", "plex-desktop_plex-desktop"] },
+        { id: "launch.claude",   icon: "󰚩", label: "Claude",   type: "exec", cmd: ["gtk-launch", "com.anthropic.Claude"] },
         // No .desktop file -- CLI tool, so it needs a terminal to run in
         // (its own TUI, same as the Add-new-app terminal below).
         { id: "launch.herdr",    icon: "󰳆", label: "Herdr",    type: "exec", cmd: ["omarchy-launch-terminal", "herdr"] }
