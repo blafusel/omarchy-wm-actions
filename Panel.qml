@@ -739,9 +739,21 @@ Panel {
       refreshWindows()
       captureFocusedWindow()
       root.disableFollowMouse()
+      root.setNoWarps(true)
     } else {
       root.restoreFollowMouse()
+      root.setNoWarps(false)
     }
+  }
+
+  // Panel actions focus their target window (hl.dsp.focus), which makes
+  // Hyprland warp the cursor to that window's center. cursor:no_warps stops
+  // that, but only while the panel is up so keybind-driven focus changes
+  // keep warping normally. Restored to false (Hyprland's default, and this
+  // setup's live value) rather than captured: no persisted state needed,
+  // and a killed session is healed by the startup self-heal, which resets it.
+  function setNoWarps(on) {
+    Quickshell.execDetached(["hyprctl", "eval", "hl.config({ cursor = { no_warps = " + (on ? "true" : "false") + " } })"])
   }
 
   // Every button click is a real pointer event -- with focus-follows-mouse
@@ -825,6 +837,7 @@ Panel {
     var width = dp1 && typeof dp1.width === "number" ? dp1.width : 0
     var correct = width >= 5120 ? 1 : 2
     Quickshell.execDetached(["hyprctl", "eval", "hl.config({ input = { follow_mouse = " + correct + " } })"])
+    root.setNoWarps(false)
 
     var previousWidth = typeof root.settings.lastKnownWidth === "number" ? root.settings.lastKnownWidth : width
     var switchedToSplit = previousWidth >= 5120 && width > 0 && width < 5120
