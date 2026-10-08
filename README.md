@@ -17,7 +17,7 @@ Built for dual-monitor setups where one screen is driven from a different PC and
 
 ## Actions
 
-- **WINDOW** - Scratchpad toggle, Float toggle, Fullscreen toggle, Close, Move to Scratchpad, Group, Ungroup
+- **WINDOW** - Scratchpad toggle, Float toggle, Fullscreen toggle, Close, Move to Scratchpad, Group, Ungroup, Move Left, Move Right
 - **CLIPBOARD** - Copy, Paste, Cut
 - **KEYS** - Escape, Up (hold to repeat), Return, 10x Ctrl+Backspace, Ctrl+C (sent as synthetic key presses)
 - **LAUNCH** - Launcher, Browser, Terminal, Plex, Herdr (opens in a terminal -- no `.desktop` file, it's a CLI tool)
@@ -100,6 +100,7 @@ omarchy plugin disable io.github.blafusel.wm-actions
 
 ## Changelog
 
+- **1.6.0** — Added WINDOW > Move Left and Move Right (move the focused window in the layout). DICTATION is now a sticky section pinned at the top of the panel, and the Favorites only toggle moved into it (description removed) so it stays visible while the rest scrolls. On shell start, follow_mouse is re-derived from DP-1's live width to self-heal a stuck value, and the pin only reopens the panel on a 5120 to 2560 switch.
 - **1.5.5** — Fixed focus-follows-mouse never coming back after closing the panel: `omarchy restart shell` kills the process outright, so with Pin panel on (always open) the restore-on-close hook from the previous session never ran, and the next session's capture would grab the already-disabled `0` as the value to "restore" to -- a self-reinforcing trap across every subsequent restart (confirmed live). The captured original and a forced-flag now persist in shell.json instead of a plain in-memory property, so it's only ever captured once and survives process restarts; re-verified across close, reopen, a mid-session shell restart while open, and close again.
 - **1.5.4** — Replaced KEYS > Backspace with 10x Ctrl+Backspace (fires Ctrl+Backspace ten times fast on one click to clear a field, instead of hold-to-repeat). While the panel (either the full grid or the audio-only widget) is open, `input:follow_mouse` is forced off and restored to whatever it actually was on close -- without it, moving the cursor across the panel to click something stole focus from whatever CLIPBOARD/KEYS/dictation was targeting, out from under the panel's own explicit window-targeting.
 - **1.5.3** — Fixed Pin panel leaving a gap below the bar: switching to `ExclusionMode.Auto` made the surface respect the bar's own reserved zone, but it was still also adding the bar's height into its own margin on top of that -- double-counting it (confirmed live: computed margin was correct, but the surface still rendered offset by the bar's height again). Margin is now 0 when pinned; the compositor alone pushes it clear of the bar. Updated preview.png.

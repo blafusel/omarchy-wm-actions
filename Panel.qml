@@ -177,11 +177,29 @@ Panel {
   onSettingsChanged: {
     if (!root._pinApplied && Object.keys(root.settings).length > 0) {
       root._pinApplied = true
-      // Read settings.pinned directly here, not the cached root.pinned --
-      // dependent readonly properties lag one tick behind a fresh settings
-      // assignment inside its own changed-signal handler (confirmed live:
-      // settings.pinned was already true, root.pinned still read false).
-      if (root.settings.pinned === true) pinOpenTimer.restart()
+
+      // Self-heal follow_mouse corruption left over from a session that got
+      // killed (omarchy restart shell) while this panel was forcing
+      // follow_mouse=0 for its click-targeting. Normally
+      // disableFollowMouse()/restoreFollowMouse() run in open/close pairs,
+      // but a killed process never reaches the close side -- and since the
+      // pin below reopens the panel unconditionally, the next
+      // disableFollowMouse() just sees followMouseForced already true and
+      // reasserts 0 again rather than restoring, so it stays stuck at 0
+      // forever across every subsequent restart until something closes the
+      // panel by hand. Don't trust the persisted followMouseOriginal to
+      // restore to either -- a session that captured its "original" while
+      // already stuck at 0 (the exact same restart-while-forced trap, one
+      // level up) poisons it to 0 too, confirmed live: shell.json held
+      // followMouseForced: false, followMouseOriginal: 0 simultaneously,
+      // which should be impossible if original were ever trustworthy.
+      // Re-derive the correct value from DP-1's actual current width
+      // instead -- the same width-based rule input.lua's
+      // omarchy-monitor-profile-sync keeps live, kept in sync here too so
+      // this doesn't drift from it: 1 at full 5120 width, 2 at split 2560.
+      // Also decides whether to pin-reopen the panel this start -- see its
+      // own comment for why that's no longer unconditional here.
+      selfHealProc.running = true
     }
   }
 
@@ -389,6 +407,10 @@ Panel {
   // window and leaves the rest of the group intact -- verified live on a
   // disposable 3-window group (removed window ends up ungrouped, the
   // other two stay grouped with each other).
+  function moveActiveWindow(dir) {
+    Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.window.move({ direction = '" + dir + "'" + root.windowClause() + " })"])
+  }
+
   function ungroupActiveWindow() {
     if (root.lastFocusedAddress && root.lastFocusedIsGrouped) {
       Quickshell.execDetached(["hyprctl", "eval",
@@ -711,6 +733,48 @@ Panel {
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.handleFollowMouseOption(text) }
   }
 
+  // One-shot startup self-heal -- see onSettingsChanged above. Re-derives
+  // the correct follow_mouse value from DP-1's live width (same rule as
+  // omarchy-monitor-profile-sync) and forces it, instead of trusting
+  // whatever this plugin's own persisted state claims right now.
+  //
+  // Also decides whether the pin should reopen the panel this start. Pinned
+  // used to mean "reopen on every shell start, unconditionally" -- but
+  // flipping DP-1's OSD switch forces a full Hyprland restart (see
+  // omarchy-set-resolution), which restarts this shell too, so the panel
+  // was popping open on EVERY resolution switch in either direction, and on
+  // any unrelated restart besides. Narrowed to one specific transition:
+  // open only when DP-1's width just went from 5120 (wide) to 2560 (split)
+  // since the last time this ran -- not wide->split->wide round trips, not
+  // restarts where the width didn't change at all. lastKnownWidth is
+  // persisted (shell.json) so this survives the process restart it's
+  // detecting across; first run ever (no persisted value) has nothing to
+  // compare against, so it just records the width without opening.
+  function handleSelfHealMonitors(raw) {
+    var monitors, dp1
+    try { monitors = JSON.parse(raw) } catch (e) { monitors = null }
+    if (monitors) {
+      for (var i = 0; i < monitors.length; i++) {
+        if (monitors[i] && monitors[i].name === "DP-1") { dp1 = monitors[i]; break }
+      }
+    }
+    var width = dp1 && typeof dp1.width === "number" ? dp1.width : 0
+    var correct = width >= 5120 ? 1 : 2
+    Quickshell.execDetached(["hyprctl", "eval", "hl.config({ input = { follow_mouse = " + correct + " } })"])
+
+    var previousWidth = typeof root.settings.lastKnownWidth === "number" ? root.settings.lastKnownWidth : width
+    var switchedToSplit = previousWidth >= 5120 && width > 0 && width < 5120
+    root.persistSettings({ followMouseForced: false, followMouseOriginal: correct, lastKnownWidth: width })
+
+    if (switchedToSplit && root.settings.pinned === true) pinOpenTimer.restart()
+  }
+
+  Process {
+    id: selfHealProc
+    command: ["hyprctl", "monitors", "-j"]
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.handleSelfHealMonitors(text) }
+  }
+
   // The panel no longer auto-closes, so it can sit open across workspace
   // switches, window moves, and focus changes -- refresh live instead of
   // leaving the windows list and the captured target window (which drives
@@ -828,11 +892,103 @@ Panel {
       width: root.singleColumn
         ? Math.max(Style.space(240), root.widestButtonWidth() + contentLeftInset + contentRightInset)
         : Style.space(300)
-      height: Math.min(contentColumn.implicitHeight + contentTopInset + contentBottomInset, floatWin.maxCardHeight)
+      height: Math.min(contentColumn.implicitHeight + dictationBar.height + Style.space(14) + contentTopInset + contentBottomInset, floatWin.maxCardHeight)
       color: Color.popups.background
       borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border, Math.max(1, Style.space(2)))
       padding: Style.spacing.popupPadding
       radius: Style.cornerRadius
+
+      // Sticky: lives outside the ScrollView so it stays pinned at the top
+      // while the rest of the panel scrolls underneath.
+      Column {
+        id: dictationBar
+        x: card.contentLeftInset
+        y: card.contentTopInset
+        width: card.width - card.contentLeftInset - card.contentRightInset
+        spacing: Style.space(8)
+
+        PanelSectionHeader {
+          text: "DICTATION"
+          foreground: root.bar.foreground
+          fontFamily: root.bar.fontFamily
+        }
+
+        // Standalone (not in actionSections): it's a stateful switch, not
+        // a fire-and-forget action, so it needs its own icon/label/active
+        // binding and must not close the panel on click.
+        Row {
+          width: parent.width
+          spacing: Style.space(6)
+
+          Button {
+            width: parent.width - audioOnlyBtn.width - (cancelBtn.visible ? cancelBtn.width + parent.spacing : 0) - parent.spacing
+            leftAlign: true
+            iconText: root.dictationRecording ? "󰓛" : "󰍬"
+            iconSpinning: root.dictationTranscribing
+            text: root.dictationRecording ? "Stop dictation" : (root.dictationTranscribing ? "Transcribing…" : "Start dictation")
+            fontSize: Style.font.bodySmall
+            iconSize: Style.font.title
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            bordered: true
+            active: root.dictationRecording
+            horizontalPadding: Style.spacing.controlPaddingX
+            verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+            onClicked: root.toggleDictation()
+          }
+
+          // Only shown mid-recording/transcription -- nothing to cancel
+          // otherwise. Discards instead of stopping-and-transcribing, for
+          // when you change your mind partway through dictating.
+          Button {
+            id: cancelBtn
+            visible: root.dictationRecording || root.dictationTranscribing
+            iconText: "󰍭"
+            fontSize: Style.font.bodySmall
+            iconSize: Style.font.title
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            bordered: true
+            horizontalPadding: Style.spacing.controlPaddingX
+            verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+            onClicked: root.cancelDictation()
+          }
+
+          Button {
+            id: audioOnlyBtn
+            iconText: "󰋋"
+            fontSize: Style.font.bodySmall
+            iconSize: Style.font.title
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            bordered: true
+            horizontalPadding: Style.spacing.controlPaddingX
+            verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
+            onClicked: root.enterAudioOnlyMode()
+          }
+
+          WrappedTooltip {
+            hoverSource: cancelBtn.visible && cancelBtn.hot
+            text: "Cancel dictation -- discard, no transcription"
+            fontFamily: root.bar.fontFamily
+          }
+
+          WrappedTooltip {
+            hoverSource: audioOnlyBtn.hot
+            text: "Audio only -- shrink to just the dictation switch, top-right corner"
+            fontFamily: root.bar.fontFamily
+          }
+        }
+
+        Toggle {
+          width: parent.width
+          label: "Favorites only"
+          checked: root.favoritesOnly
+          foreground: root.bar.foreground
+          fontFamily: root.bar.fontFamily
+          onClicked: root.toggleFavoritesOnly()
+        }
+      }
 
       // ScrollView is a no-op wrapper when content fits (no scrollbar,
       // no flicking) -- only kicks in once contentColumn's natural height
@@ -842,9 +998,9 @@ Panel {
       ScrollView {
         id: scrollArea
         x: card.contentLeftInset
-        y: card.contentTopInset
+        y: card.contentTopInset + dictationBar.height + Style.space(14)
         width: card.width - card.contentLeftInset - card.contentRightInset
-        height: card.height - card.contentTopInset - card.contentBottomInset
+        height: card.height - (y + card.contentBottomInset)
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
         ScrollBar.vertical.policy: contentColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
@@ -997,20 +1153,6 @@ Panel {
           foreground: root.bar.foreground
         }
 
-        Toggle {
-          width: contentColumn.width
-          label: "Favorites only"
-          description: "Hide everything except starred buttons"
-          checked: root.favoritesOnly
-          foreground: root.bar.foreground
-          fontFamily: root.bar.fontFamily
-          onClicked: root.toggleFavoritesOnly()
-        }
-
-        PanelSeparator {
-          foreground: root.bar.foreground
-        }
-
         Column {
           width: contentColumn.width
           spacing: Style.space(8)
@@ -1120,6 +1262,32 @@ Panel {
               onFavoriteToggled: root.toggleFavorite("window.ungroup")
               onClicked: root.ungroupActiveWindow()
             }
+
+            FavButton {
+              Layout.fillWidth: true
+              visible: !root.favoritesOnly || root.isFavorite("window.moveleft")
+              iconText: "󰁍"
+              text: "Move Left"
+              tooltipText: "Move the focused window left in the layout"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              isFavorite: root.isFavorite("window.moveleft")
+              onFavoriteToggled: root.toggleFavorite("window.moveleft")
+              onClicked: root.moveActiveWindow("l")
+            }
+
+            FavButton {
+              Layout.fillWidth: true
+              visible: !root.favoritesOnly || root.isFavorite("window.moveright")
+              iconText: "󰁔"
+              text: "Move Right"
+              tooltipText: "Move the focused window right in the layout"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+              isFavorite: root.isFavorite("window.moveright")
+              onFavoriteToggled: root.toggleFavorite("window.moveright")
+              onClicked: root.moveActiveWindow("r")
+            }
           }
         }
 
@@ -1165,84 +1333,6 @@ Panel {
                   onRepeated: root.sendKeyFast(modelData.key, modelData.mods || "")
                 }
               }
-            }
-          }
-        }
-
-        Column {
-          width: contentColumn.width
-          spacing: Style.space(8)
-
-          PanelSectionHeader {
-            text: "DICTATION"
-            foreground: root.bar.foreground
-            fontFamily: root.bar.fontFamily
-          }
-
-          // Standalone (not in actionSections): it's a stateful switch, not
-          // a fire-and-forget action, so it needs its own icon/label/active
-          // binding and must not close the panel on click.
-          Row {
-            width: parent.width
-            spacing: Style.space(6)
-
-            Button {
-              width: parent.width - audioOnlyBtn.width - (cancelBtn.visible ? cancelBtn.width + parent.spacing : 0) - parent.spacing
-              leftAlign: true
-              iconText: root.dictationRecording ? "󰓛" : "󰍬"
-              iconSpinning: root.dictationTranscribing
-              text: root.dictationRecording ? "Stop dictation" : (root.dictationTranscribing ? "Transcribing…" : "Start dictation")
-              fontSize: Style.font.bodySmall
-              iconSize: Style.font.title
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-              bordered: true
-              active: root.dictationRecording
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
-              onClicked: root.toggleDictation()
-            }
-
-            // Only shown mid-recording/transcription -- nothing to cancel
-            // otherwise. Discards instead of stopping-and-transcribing, for
-            // when you change your mind partway through dictating.
-            Button {
-              id: cancelBtn
-              visible: root.dictationRecording || root.dictationTranscribing
-              iconText: "󰍭"
-              fontSize: Style.font.bodySmall
-              iconSize: Style.font.title
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-              bordered: true
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
-              onClicked: root.cancelDictation()
-            }
-
-            Button {
-              id: audioOnlyBtn
-              iconText: "󰋋"
-              fontSize: Style.font.bodySmall
-              iconSize: Style.font.title
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-              bordered: true
-              horizontalPadding: Style.spacing.controlPaddingX
-              verticalPadding: Style.spacing.controlPaddingY + Style.space(4)
-              onClicked: root.enterAudioOnlyMode()
-            }
-
-            WrappedTooltip {
-              hoverSource: cancelBtn.visible && cancelBtn.hot
-              text: "Cancel dictation -- discard, no transcription"
-              fontFamily: root.bar.fontFamily
-            }
-
-            WrappedTooltip {
-              hoverSource: audioOnlyBtn.hot
-              text: "Audio only -- shrink to just the dictation switch, top-right corner"
-              fontFamily: root.bar.fontFamily
             }
           }
         }
