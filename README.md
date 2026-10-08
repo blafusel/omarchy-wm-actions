@@ -100,7 +100,7 @@ omarchy plugin disable io.github.blafusel.wm-actions
 
 ## Changelog
 
-- **1.7.1** — Fixed the cursor jumping to the center of the target window when a panel action ran: `cursor:no_warps` is now forced on while the panel is open and restored to off on close (and reset by the startup self-heal after a killed shell). Keybind-driven focus changes keep warping normally.
+- **1.7.2** — Fixed the cursor jumping to the center of the target window when a panel action ran: `cursor:no_warps` is now forced on while the panel is open and restored to off on close (and reset by the startup self-heal after a killed shell). Keybind-driven focus changes keep warping normally.
 - **1.7.1** — Added LAUNCH > Claude, launched via `gtk-launch com.anthropic.Claude` (desktop-file id, not a hardcoded binary path, same pattern as Plex).
 - **1.7.0** — Section headers are now collapsible (click the chevron header) and reorderable (click and drag a header to a new position). WINDOW, CLIPBOARD, KEYS, LAUNCH, SYSTEM, WINDOWS and STASHED all support both; collapsed state and section order persist across shell restarts in shell.json. The thin separators between those sections were removed since sections can now move.
 - **1.6.0** — Added WINDOW > Move Left and Move Right (move the focused window in the layout). DICTATION is now a sticky section pinned at the top of the panel, and the Favorites only toggle moved into it (description removed) so it stays visible while the rest scrolls. On shell start, follow_mouse is re-derived from DP-1's live width to self-heal a stuck value, and the pin only reopens the panel on a 5120 to 2560 switch.
